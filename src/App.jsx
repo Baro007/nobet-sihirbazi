@@ -71,23 +71,41 @@ function App() {
       
       // Tercihleri çek
       const preferencesResponse = await fetch(`${API_BASE}/get-preferences`)
-      const preferencesData = await preferencesResponse.json()
-      setPreferences(preferencesData)
-      
-      // Doktor listesini tercihlere göre oluştur
-      const doctorList = Object.keys(preferencesData || {})
-      setAllDoctors(doctorList)
+      if (!preferencesResponse.ok) {
+        console.error('Preferences API Error - Status:', preferencesResponse.status)
+        addNotification('warning', 'Tercihler yüklenemedi, boş başlatılıyor')
+        setPreferences({})
+        setAllDoctors([])
+      } else {
+        const preferencesData = await preferencesResponse.json()
+        setPreferences(preferencesData || {})
+        
+        // Doktor listesini tercihlere göre oluştur
+        const doctorList = Object.keys(preferencesData || {})
+        setAllDoctors(doctorList)
+      }
       
       // Çizelgeyi çek
       const scheduleResponse = await fetch(`${API_BASE}/get-schedule`)
-      const scheduleData = await scheduleResponse.json()
-      setSchedule(scheduleData)
+      if (!scheduleResponse.ok) {
+        console.error('Schedule API Error - Status:', scheduleResponse.status)
+        addNotification('warning', 'Çizelge yüklenemedi, boş başlatılıyor')
+        setSchedule({})
+      } else {
+        const scheduleData = await scheduleResponse.json()
+        setSchedule(scheduleData || {})
+      }
       
       addNotification('success', 'Veriler başarıyla yüklendi!')
       
     } catch (error) {
       console.error('Veri çekme hatası:', error)
-      addNotification('error', 'Veri yüklenirken hata oluştu')
+      addNotification('error', 'Veri yüklenirken hata oluştu: ' + error.message)
+      
+      // Fallback olarak boş data set et
+      setPreferences({})
+      setAllDoctors([])
+      setSchedule({})
     } finally {
       setLoading(false)
     }
@@ -114,6 +132,14 @@ function App() {
         })
       })
 
+      // Response status kontrolü
+      if (!response.ok) {
+        const errorText = await response.text()
+        console.error('API Error - Status:', response.status, 'Text:', errorText)
+        addNotification('error', `Sunucu hatası (${response.status}): Lütfen tekrar deneyin`)
+        return false
+      }
+
       const result = await response.json()
       
       if (result.success) {
@@ -122,12 +148,21 @@ function App() {
         addNotification('success', 'Tercihleriniz başarıyla kaydedildi!')
         return true
       } else {
-        addNotification('error', 'Hata: ' + result.error)
+        console.error('API Business Logic Error:', result.error)
+        addNotification('error', 'Hata: ' + (result.error || 'Bilinmeyen hata'))
         return false
       }
     } catch (error) {
       console.error('Tercih kaydetme hatası:', error)
-      addNotification('error', 'Tercih kaydederken bir hata oluştu')
+      
+      // Network hatası mı, JSON parse hatası mı?
+      if (error instanceof TypeError && error.message.includes('fetch')) {
+        addNotification('error', 'Bağlantı hatası: İnternet bağlantınızı kontrol edin')
+      } else if (error instanceof SyntaxError) {
+        addNotification('error', 'Sunucu yanıt formatı hatası: Lütfen sayfayı yenileyin')
+      } else {
+        addNotification('error', 'Bilinmeyen hata oluştu: ' + error.message)
+      }
       return false
     }
   }
@@ -172,17 +207,32 @@ function App() {
         })
       })
 
+      if (!response.ok) {
+        const errorText = await response.text()
+        console.error('Generate Schedule API Error - Status:', response.status, 'Text:', errorText)
+        addNotification('error', `Çizelge oluşturma sunucu hatası (${response.status}): Lütfen tekrar deneyin`)
+        return
+      }
+
       const result = await response.json()
       
       if (result.success) {
-        setSchedule(result.schedule)
+        setSchedule(result.schedule || {})
         addNotification('success', 'Çizelge başarıyla oluşturuldu!')
       } else {
-        addNotification('error', 'Çizelge oluşturma hatası: ' + result.error)
+        console.error('Generate Schedule Business Logic Error:', result.error)
+        addNotification('error', 'Çizelge oluşturma hatası: ' + (result.error || 'Bilinmeyen hata'))
       }
     } catch (error) {
       console.error('Çizelge oluşturma hatası:', error)
-      addNotification('error', 'Çizelge oluşturulurken hata oluştu')
+      
+      if (error instanceof TypeError && error.message.includes('fetch')) {
+        addNotification('error', 'Çizelge oluşturma bağlantı hatası: İnternet bağlantınızı kontrol edin')
+      } else if (error instanceof SyntaxError) {
+        addNotification('error', 'Çizelge oluşturma yanıt hatası: Lütfen sayfayı yenileyin')
+      } else {
+        addNotification('error', 'Çizelge oluşturulurken hata oluştu: ' + error.message)
+      }
     } finally {
       setLoading(false)
     }
