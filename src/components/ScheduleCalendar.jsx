@@ -7,6 +7,7 @@ function ScheduleCalendar({ currentUserName, preferences, allDoctors, onSave, is
   const [pozitifGunler, setPozitifGunler] = useState([])
   const [negatifGunler, setNegatifGunler] = useState([])
   const [ozelSebepler, setOzelSebepler] = useState('')
+  const [selectionMode, setSelectionMode] = useState('pozitif') // 'pozitif' veya 'negatif'
 
   // Temmuz 2025
   const month = new Date(2025, 6) // 6 = Temmuz (0-indexed)
@@ -24,24 +25,30 @@ function ScheduleCalendar({ currentUserName, preferences, allDoctors, onSave, is
     }
   }, [currentUserName, preferences])
 
-  // Gün tıklama işlemi
+  // Gün tıklama işlemi - Mod bazlı seçim
   const handleDayClick = (day) => {
     const dayNumber = day.getDate()
     
-    // Mevcut durumu kontrol et
-    const isPozitif = pozitifGunler.includes(dayNumber)
-    const isNegatif = negatifGunler.includes(dayNumber)
-    
-    if (!isPozitif && !isNegatif) {
-      // Boş -> Pozitif
-      setPozitifGunler([...pozitifGunler, dayNumber])
-    } else if (isPozitif) {
-      // Pozitif -> Negatif
-      setPozitifGunler(pozitifGunler.filter(d => d !== dayNumber))
-      setNegatifGunler([...negatifGunler, dayNumber])
-    } else if (isNegatif) {
-      // Negatif -> Boş
-      setNegatifGunler(negatifGunler.filter(d => d !== dayNumber))
+    if (selectionMode === 'pozitif') {
+      // Pozitif mod: Bu günü pozitif listesine ekle/çıkar
+      if (pozitifGunler.includes(dayNumber)) {
+        // Zaten seçili, çıkar
+        setPozitifGunler(pozitifGunler.filter(d => d !== dayNumber))
+      } else {
+        // Seçili değil, ekle (önce negatiften çıkar)
+        setNegatifGunler(negatifGunler.filter(d => d !== dayNumber))
+        setPozitifGunler([...pozitifGunler, dayNumber])
+      }
+    } else if (selectionMode === 'negatif') {
+      // Negatif mod: Bu günü negatif listesine ekle/çıkar
+      if (negatifGunler.includes(dayNumber)) {
+        // Zaten seçili, çıkar
+        setNegatifGunler(negatifGunler.filter(d => d !== dayNumber))
+      } else {
+        // Seçili değil, ekle (önce pozitiften çıkar)
+        setPozitifGunler(pozitifGunler.filter(d => d !== dayNumber))
+        setNegatifGunler([...negatifGunler, dayNumber])
+      }
     }
   }
 
@@ -99,7 +106,22 @@ function ScheduleCalendar({ currentUserName, preferences, allDoctors, onSave, is
     return ''
   }
 
-  // Diğer doktorların tercihlerini say
+  // Toplam doktor sayısını say (mevcut kullanıcı dahil)
+  const getTotalDoctorCount = (dayNumber) => {
+    let count = 0
+    Object.keys(preferences).forEach(doctor => {
+      if (preferences[doctor].pozitif?.includes(dayNumber)) {
+        count++
+      }
+    })
+    // Mevcut kullanıcının tercihini de ekle (henüz kaydedilmemişse)
+    if (currentUserName && pozitifGunler.includes(dayNumber) && !preferences[currentUserName]?.pozitif?.includes(dayNumber)) {
+      count++
+    }
+    return count
+  }
+
+  // Sadece diğer doktorların tercihlerini say (eski fonksiyon)
   const getOtherDoctorCount = (dayNumber) => {
     let count = 0
     Object.keys(preferences).forEach(doctor => {
@@ -117,75 +139,174 @@ function ScheduleCalendar({ currentUserName, preferences, allDoctors, onSave, is
         .rdp-day-positive {
           background-color: #10b981 !important;
           color: white !important;
+          box-shadow: 0 2px 4px rgba(16, 185, 129, 0.3) !important;
         }
         .rdp-day-negative {
           background-color: #ef4444 !important;
           color: white !important;
+          box-shadow: 0 2px 4px rgba(239, 68, 68, 0.3) !important;
         }
         .rdp-day {
           position: relative;
-          cursor: pointer;
+          cursor: pointer !important;
+          transition: all 0.2s ease !important;
+          border-radius: 6px !important;
         }
         .rdp-day:hover {
           background-color: #e5e7eb !important;
+          transform: scale(1.05) !important;
         }
         .rdp-day-positive:hover {
           background-color: #059669 !important;
+          transform: scale(1.05) !important;
         }
         .rdp-day-negative:hover {
           background-color: #dc2626 !important;
+          transform: scale(1.05) !important;
         }
         .demand-badge {
           position: absolute;
-          top: -2px;
-          right: -2px;
+          top: -4px;
+          right: -4px;
           background-color: #3b82f6;
           color: white;
           border-radius: 50%;
-          width: 16px;
-          height: 16px;
-          font-size: 10px;
+          width: 18px;
+          height: 18px;
+          font-size: 11px;
           display: flex;
           align-items: center;
           justify-content: center;
           font-weight: bold;
+          border: 2px solid white;
+          box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+        }
+        .selection-mode-pozitif .rdp-day:hover {
+          background-color: #dcfce7 !important;
+          border: 2px solid #10b981 !important;
+        }
+        .selection-mode-negatif .rdp-day:hover {
+          background-color: #fef2f2 !important;
+          border: 2px solid #ef4444 !important;
         }
       `}</style>
 
+      {/* Mod Seçimi ve Bilgilendirme */}
+      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+        <h4 className="font-medium text-blue-900 mb-3">
+          📅 Tercih Seçimi - Adım Adım Rehber
+        </h4>
+        
+        {/* Mod Seçim Butonları */}
+        <div className="flex space-x-3 mb-4">
+          <button
+            onClick={() => setSelectionMode('pozitif')}
+            className={`flex items-center px-4 py-2 rounded-md font-medium transition duration-200 ${
+              selectionMode === 'pozitif'
+                ? 'bg-green-600 text-white shadow-md'
+                : 'bg-white text-green-600 border border-green-600 hover:bg-green-50'
+            }`}
+          >
+            ✅ 1. Adım: İstediğim Günler
+          </button>
+          <button
+            onClick={() => setSelectionMode('negatif')}
+            className={`flex items-center px-4 py-2 rounded-md font-medium transition duration-200 ${
+              selectionMode === 'negatif'
+                ? 'bg-red-600 text-white shadow-md'
+                : 'bg-white text-red-600 border border-red-600 hover:bg-red-50'
+            }`}
+          >
+            ❌ 2. Adım: İstemediğim Günler
+          </button>
+        </div>
+
+        {/* Aktif Mod Bilgilendirmesi */}
+        <div className={`p-3 rounded-md ${
+          selectionMode === 'pozitif' ? 'bg-green-100 border border-green-300' : 'bg-red-100 border border-red-300'
+        }`}>
+          <p className={`text-sm font-medium ${
+            selectionMode === 'pozitif' ? 'text-green-800' : 'text-red-800'
+          }`}>
+            {selectionMode === 'pozitif' ? (
+              '🟢 Pozitif Seçim Modu: Nöbet tutmak istediğiniz günlere tıklayın'
+            ) : (
+              '🔴 Negatif Seçim Modu: Nöbet tutmak istemediğiniz günlere tıklayın'
+            )}
+          </p>
+          <p className={`text-xs mt-1 ${
+            selectionMode === 'pozitif' ? 'text-green-600' : 'text-red-600'
+          }`}>
+            • Günlere tıklayarak seçim yapın • Tekrar tıklayarak seçimi kaldırabilirsiniz
+            • Mavi sayılar: O günü isteyen doktor sayısı
+          </p>
+        </div>
+      </div>
+
       {/* Takvim */}
-      <div className="flex justify-center">
-        <DayPicker
-          mode="single"
-          month={month}
-          onDayClick={handleDayClick}
-          modifiers={{
-            positive: pozitifGunler.map(day => new Date(2025, 6, day)),
-            negative: negatifGunler.map(day => new Date(2025, 6, day))
-          }}
-          modifiersClassNames={{
-            positive: 'rdp-day-positive',
-            negative: 'rdp-day-negative'
-          }}
-          components={{
-            Day: ({ date, ...props }) => {
-              const dayNumber = date.getDate()
-              const otherDoctorCount = getOtherDoctorCount(dayNumber)
-              
-              return (
-                <div className="relative">
-                  <button {...props} className={`rdp-day ${getDayStyle(date)}`}>
-                    {dayNumber}
-                    {otherDoctorCount > 0 && (
-                      <span className="demand-badge">
-                        {otherDoctorCount}
-                      </span>
-                    )}
-                  </button>
-                </div>
-              )
-            }
-          }}
-        />
+      <div className={`flex justify-center selection-mode-${selectionMode}`}>
+        <div className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm">
+          <DayPicker
+            mode="single"
+            month={month}
+            onDayClick={handleDayClick}
+            modifiers={{
+              positive: pozitifGunler.map(day => new Date(2025, 6, day)),
+              negative: negatifGunler.map(day => new Date(2025, 6, day))
+            }}
+            modifiersClassNames={{
+              positive: 'rdp-day-positive',
+              negative: 'rdp-day-negative'
+            }}
+            components={{
+              Day: ({ date, ...props }) => {
+                const dayNumber = date.getDate()
+                const totalDoctorCount = getTotalDoctorCount(dayNumber)
+                const isPozitif = pozitifGunler.includes(dayNumber)
+                const isNegatif = negatifGunler.includes(dayNumber)
+                
+                return (
+                  <div className="relative">
+                    <button 
+                      {...props} 
+                      className={`rdp-day ${getDayStyle(date)}`}
+                      title={`${dayNumber} Temmuz - ${totalDoctorCount} doktor bu günü istiyor`}
+                    >
+                      <div className="flex flex-col items-center">
+                        <span className="text-sm font-medium">{dayNumber}</span>
+                        {isPozitif && <span className="text-xs">✓</span>}
+                        {isNegatif && <span className="text-xs">✗</span>}
+                      </div>
+                      {totalDoctorCount > 0 && (
+                        <span className="demand-badge" title={`${totalDoctorCount} doktor bu günü istiyor`}>
+                          {totalDoctorCount}
+                        </span>
+                      )}
+                    </button>
+                  </div>
+                )
+              }
+            }}
+          />
+          
+          {/* Takvim Alt Bilgi */}
+          <div className="mt-4 text-center">
+            <div className="flex justify-center space-x-4 text-xs text-gray-600">
+              <div className="flex items-center">
+                <div className="w-3 h-3 bg-green-500 rounded-full mr-1"></div>
+                <span>İstediğim ({pozitifGunler.length})</span>
+              </div>
+              <div className="flex items-center">
+                <div className="w-3 h-3 bg-red-500 rounded-full mr-1"></div>
+                <span>İstemediğim ({negatifGunler.length})</span>
+              </div>
+              <div className="flex items-center">
+                <div className="w-3 h-3 bg-blue-500 rounded-full mr-1"></div>
+                <span>Diğer doktor sayısı</span>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* İstatistikler */}
@@ -257,17 +378,31 @@ function ScheduleCalendar({ currentUserName, preferences, allDoctors, onSave, is
         </p>
       </div>
 
-      {/* Açıklama */}
-      <div className="bg-blue-50 p-4 rounded-lg">
-        <h4 className="font-medium text-blue-900 mb-2">Nasıl Kullanılır:</h4>
-        <ul className="text-sm text-blue-700 space-y-1">
-          <li>• Günlere tıklayarak tercihlerinizi belirleyin</li>
-          <li>• Yeşil: Nöbet tutmak istediğiniz günler</li>
-          <li>• Kırmızı: Nöbet tutmak istemediğiniz günler</li>
-          <li>• Mavi sayılar: O günü isteyen diğer doktor sayısı</li>
-          <li>• Özel sebepler alanında ek bilgilerinizi yazın</li>
-          <li>• Değişiklik sonrası mutlaka "Kaydet" butonuna tıklayın</li>
-        </ul>
+      {/* Kullanım Rehberi */}
+      <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg p-4">
+        <h4 className="font-medium text-blue-900 mb-3 flex items-center">
+          📖 Kullanım Rehberi
+        </h4>
+        <div className="grid md:grid-cols-2 gap-4">
+          <div>
+            <h5 className="font-medium text-blue-800 mb-2">🎯 Seçim Adımları:</h5>
+            <ul className="text-sm text-blue-700 space-y-1">
+              <li>• <strong>1. Adım:</strong> "İstediğim Günler" modunda yeşil butonla seçim yapın</li>
+              <li>• <strong>2. Adım:</strong> "İstemediğim Günler" moduna geçip kırmızı butonla seçim yapın</li>
+              <li>• <strong>3. Adım:</strong> Özel sebeplerinizi yazın (isteğe bağlı)</li>
+              <li>• <strong>4. Adım:</strong> "Kaydet" butonuna tıklayın</li>
+            </ul>
+          </div>
+          <div>
+            <h5 className="font-medium text-blue-800 mb-2">💡 İpuçları:</h5>
+            <ul className="text-sm text-blue-700 space-y-1">
+              <li>• Günlerin üzerindeki ✓ ve ✗ işaretlerine dikkat edin</li>
+              <li>• Mavi sayılar: O günü isteyen toplam doktor sayısı</li>
+              <li>• Tekrar tıklayarak seçimi kaldırabilirsiniz</li>
+              <li>• Maksimum 15 pozitif, 20 negatif tercih yapabilirsiniz</li>
+            </ul>
+          </div>
+        </div>
       </div>
 
       {/* Butonlar */}
