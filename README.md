@@ -1,165 +1,221 @@
-# NöbetSihirbazı 🏥
+# 🏥 NöbetSihirbazı - Supabase Cloud Database
 
-Doktor nöbet planlama uygulaması - Doktorların tercihlerini toplar ve adil, kurallara uygun nöbet çizelgesi oluşturur.
+**Doktor nöbet planlama uygulaması** - Supabase ile güçlendirilmiş, gerçek zamanlı tercih toplama ve akıllı çizelge sistemi
 
-## 📋 Özellikler
+## ✨ Özellikler
 
-- **9 doktor için otomatik nöbet planlaması**
-- **Tercih tabanlı algoritma** - Doktorların pozitif/negatif tercihlerini dikkate alır
-- **Kurallar:**
-  - Her doktor ayda en fazla 8 nöbet
-  - Ardışık nöbet yasak (en az 1 gün ara)
-  - Hafta içi 2 doktor, hafta sonu 3 doktor
-  - Dengeleme kuralı ile adil dağılım
+- 🔥 **Supabase Cloud Database** - Farklı cihazlardan erişim
+- ⚡ **Gerçek Zamanlı Güncellemeler** - Anlık senkronizasyon  
+- 🎯 **Akıllı Çizelge Algoritması** - Adil nöbet dağılımı
+- 📱 **Responsive Tasarım** - Mobil ve desktop uyumlu
+- 📊 **Admin Panel** - Kapsamlı yönetim ve istatistikler
+- 💾 **Offline Destek** - İnternet kesildiğinde yerel çalışma
+- 📤 **Export İşlemleri** - JSON ve CSV formatında veri çıktısı
 
-## 🚀 Kurulum
+### Nöbet Kuralları
+- Her doktor ayda en fazla **8 nöbet**
+- Ardışık nöbet yasak (**en az 1 gün ara**)
+- Hafta içi **2 doktor**, hafta sonu **3 doktor**
+- **Pozitif/negatif** tercihler dikkate alınır
+- **Dengeleme algoritması** ile adil dağılım
 
-### Gereksinimler
-- Node.js 18+ 
-- npm veya yarn
-- Netlify hesabı
+## 🚀 Hızlı Kurulum
 
-### Yerel Geliştirme
-
-1. **Projeyi klonlayın:**
+### 1. Projeyi İndirin
 ```bash
 git clone <repository-url>
 cd nobet-sihirbazi
-```
-
-2. **Bağımlılıkları yükleyin:**
-```bash
 npm install
 ```
 
-3. **Netlify CLI ile geliştirme sunucusunu başlatın:**
+### 2. Supabase Kurulumu
+
+#### 2.1 Supabase Hesabı
+1. [https://supabase.com](https://supabase.com) adresine gidin
+2. **"Start your project"** ile kayıt olun
+3. **"New Project"** ile yeni proje oluşturun
+   - Proje adı: `nobet-sihirbazi`
+   - Şifre belirleyin
+   - Bölge: Europe West (önerilir)
+
+#### 2.2 API Bilgilerini Alın
+1. **Settings > API** menüsüne gidin
+2. **Project URL** ve **anon public** key'i kopyalayın
+
+#### 2.3 Environment Variables
 ```bash
-npm run netlify:dev
+# .env.example dosyasını .env olarak kopyalayın
+cp .env.example .env
+
+# .env dosyasını düzenleyin
+VITE_SUPABASE_URL=https://your-project-id.supabase.co
+VITE_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 ```
 
-Bu komut hem frontend'i (Vite) hem de backend fonksiyonlarını (Netlify Functions) aynı anda çalıştırır.
+#### 2.4 Database Tablolarını Oluşturun
+1. Supabase Dashboard'da **SQL Editor**'e gidin
+2. `supabase-schema.sql` dosyasının içeriğini kopyalayın
+3. SQL Editor'e yapıştırıp **RUN** butonuna basın
 
-### Alternatif Geliştirme
-
-Sadece frontend'i çalıştırmak için:
+### 3. Uygulamayı Başlatın
 ```bash
 npm run dev
 ```
 
+🎉 Tarayıcınızda [http://localhost:5173](http://localhost:5173) adresini açın!
+
 ## 🌐 Deploy
 
-### Netlify'e Deploy
+### Netlify Deploy (Önerilen)
+1. GitHub'a push edin
+2. Netlify'de "New site from Git" seçin
+3. Repository'yi bağlayın
+4. Environment variables'ı Netlify'de ayarlayın:
+   - `VITE_SUPABASE_URL`
+   - `VITE_SUPABASE_ANON_KEY`
+5. Deploy edin
 
-1. **Netlify hesabınıza giriş yapın:**
+### Vercel Deploy
 ```bash
-netlify login
+npm run build
+vercel --prod
 ```
-
-2. **Projeyi build edin:**
-```bash
-npm run netlify:build
-```
-
-3. **Deploy edin:**
-```bash
-npm run netlify:deploy
-```
-
-### Otomatik Deploy
-
-GitHub'a push ettiğinizde otomatik deploy için:
-
-1. Netlify Dashboard'da "New site from Git" seçin
-2. Repository'nizi bağlayın
-3. Build ayarları otomatik olarak `netlify.toml` dosyasından alınır
 
 ## 📁 Proje Yapısı
 
 ```
 nobet-sihirbazi/
-├── netlify/
-│   └── functions/           # Serverless API fonksiyonları
-│       ├── get-preferences.js
-│       ├── save-preferences.js
-│       ├── generate-schedule.js
-│       └── get-schedule.js
 ├── src/
 │   ├── components/          # React bileşenleri
-│   │   ├── DoctorSelector.jsx
-│   │   ├── ScheduleCalendar.jsx
-│   │   ├── SubmitButton.jsx
-│   │   └── ScheduleDisplay.jsx
+│   │   ├── UserNameInput.jsx     # Doktor adı girişi
+│   │   ├── ScheduleCalendar.jsx  # Tercih takvimi
+│   │   ├── SubmitButton.jsx      # Kaydet butonu
+│   │   └── ScheduleDisplay.jsx   # Çizelge görüntüleme
+│   ├── supabaseClient.js    # Supabase konfigürasyonu
 │   ├── App.jsx             # Ana uygulama
 │   ├── main.jsx            # Entry point
 │   └── index.css           # Tailwind CSS
+├── supabase-schema.sql     # Database schema
+├── .env.example            # Environment variables örneği
 ├── package.json
 ├── vite.config.js
 ├── tailwind.config.js
-├── netlify.toml            # Netlify konfigürasyonu
 └── README.md
 ```
 
-## 🔧 API Endpoints
+## 🗄️ Database Yapısı
 
-### `/api/get-preferences`
-- **Method:** GET
-- **Açıklama:** Tüm doktorların tercihlerini getirir
-
-### `/api/save-preferences`
-- **Method:** POST
-- **Body:** 
-```json
-{
-  "doktorAdi": "Dr. Ahmet Yılmaz",
-  "pozitifGunler": [5, 12, 18],
-  "negatifGunler": [2, 9]
-}
+### `doctor_preferences` Tablosu
+```sql
+id              SERIAL PRIMARY KEY
+doctor_name     VARCHAR(255) UNIQUE NOT NULL
+positive_days   INTEGER[] DEFAULT '{}'    -- Tercih edilen günler
+negative_days   INTEGER[] DEFAULT '{}'    -- İstenmeyen günler  
+special_notes   TEXT DEFAULT ''          -- Özel notlar
+created_at      TIMESTAMP WITH TIME ZONE
+updated_at      TIMESTAMP WITH TIME ZONE
 ```
 
-### `/api/generate-schedule`
-- **Method:** POST
-- **Açıklama:** Tercihlere göre nöbet çizelgesi oluşturur
+### `schedule` Tablosu  
+```sql
+id                SERIAL PRIMARY KEY
+day_number        INTEGER NOT NULL       -- Ayın günü (1-31)
+assigned_doctors  TEXT[] DEFAULT '{}'    -- Atanan doktorlar
+created_at        TIMESTAMP WITH TIME ZONE
+```
 
-### `/api/get-schedule`
-- **Method:** GET
-- **Açıklama:** Oluşturulan çizelgeyi getirir
+## ⚡ Supabase İşlemleri
 
-## 🎯 Kullanım
+### Tercih Kaydetme
+```javascript
+await dbOperations.savePreferences(
+  doctorName,     // Doktor adı
+  pozitifGunler,  // [5, 12, 19] - tercih edilen günler
+  negatifGunler,  // [2, 9, 23] - istenmeyen günler
+  ozelSebepler    // "Pazartesi günleri müsait değil"
+)
+```
 
-1. **Tercih Toplama Sekmesi:**
-   - Doktor seçin
-   - Takvimde günlere tıklayarak tercih belirtin
-   - Yeşil: İstenen günler
-   - Kırmızı: İstenmeyen günler
-   - "Tercihlerimi Kaydet" butonuna tıklayın
+### Çizelge Oluşturma
+```javascript
+await dbOperations.saveSchedule({
+  1: ["Dr. Ali", "Dr. Ayşe"],      // 1 Temmuz
+  2: ["Dr. Mehmet", "Dr. Fatma"],  // 2 Temmuz
+  // ...
+})
+```
 
-2. **Nöbet Çizelgesi Sekmesi:**
-   - "Çizelge Oluştur" butonuna tıklayın
-   - Algoritma otomatik olarak adil bir çizelge oluşturur
-   - Sonuçları görüntüleyin
+### Gerçek Zamanlı Güncellemeler
+```javascript
+dbOperations.subscribeToPreferences((payload) => {
+  console.log('Tercih güncellendi:', payload)
+  // UI'ı güncelle
+})
+```
 
-## 🔄 Nöbet Planlama Algoritması
+## 👩‍⚕️ Kullanım Kılavuzu
 
-1. **Tercih Skorlaması:**
-   - Pozitif tercih: +50 puan
-   - Negatif tercih: -100 puan
-   - Az nöbet sayısı: +10 puan
+### Doktor Tercihleri Girme
+1. **Doktor adınızı** girin (yeni doktor otomatik eklenir)
+2. **Takvimde** tercih ettiğiniz günlere tıklayın
+   - **Yeşil**: Pozitif tercih (o günü istiyorum)
+   - **Kırmızı**: Negatif tercih (o günü istemiyorum)
+   - **Gri**: Nötr (tercih yok)
+3. **Özel notlar** ekleyin (opsiyonel)
+4. **"Tercihleri Kaydet"** butonuna basın
 
-2. **Kural Kontrolü:**
-   - Maksimum nöbet sayısı aşımı
-   - Ardışık nöbet kontrolü
-   - Negatif tercih kontrolü
+### Admin Paneli (Şifre: admin2025)
+1. Sağ üstteki **şifre alanına** `admin2025` yazın
+2. **Admin** butonuna basın
+3. **3 sekme** görünür:
+   - **Tercih Toplama**: Doktor tercihlerini görüntüleme
+   - **Çizelge Yönetimi**: Akıllı çizelge oluşturma
+   - **Admin Panel**: İstatistikler ve export işlemleri
 
-3. **Dengeleme:**
-   - Hedefin altında kalan doktorlar için hafta içi günlerde 3. doktor ataması
+### Admin İşlemleri
+- 📊 **Sistem İstatistikleri**: Doktor sayısı, tamamlanma oranı
+- 🔄 **Supabase'den Yenile**: Cloud'dan güncel veriyi çek
+- ⚡ **Gerçek Zamanlı**: Anlık güncellemeleri aç/kapat
+- 📤 **Export**: JSON/CSV formatında veri indirme
+- 🗑️ **Veri Temizleme**: Tüm verileri silme
 
-## 🛠️ Teknolojiler
+## 🤖 Akıllı Çizelge Algoritması
 
-- **Frontend:** React, Vite, Tailwind CSS
-- **UI Kütüphaneleri:** react-day-picker, lucide-react
-- **Backend:** Netlify Functions
-- **Database:** Netlify Blobs
-- **Hosting:** Netlify
+### 1. Tercih Önceliklendirme
+- **Pozitif tercihler** önce değerlendirilir
+- **Negatif tercihler** kesinlikle dikkate alınır
+- **En az nöbet alan** doktorlar öncelik kazanır
+
+### 2. Kural Kontrolü
+- ✅ Maksimum **8 nöbet/ay** sınırı
+- ✅ **Ardışık nöbet yasağı** (1 gün ara)
+- ✅ Hafta içi **2 doktor**, hafta sonu **3 doktor**
+- ✅ **Negatif tercih** kontrolü
+
+### 3. Adil Dağılım
+- Nöbet sayıları **dengelenir**
+- Az nöbet alan doktorlar **önceliklendirilir**
+- **Hafta sonu** dağılımı optimize edilir
+
+## 🛠️ Teknoloji Stack'i
+
+### Frontend
+- **React 18** - Modern UI framework
+- **Vite** - Hızlı build tool  
+- **Tailwind CSS** - Utility-first CSS
+- **Lucide React** - Modern ikonlar
+- **React Day Picker** - Takvim komponenti
+
+### Backend & Database
+- **Supabase** - PostgreSQL cloud database
+- **Realtime API** - Anlık güncellemeler
+- **Row Level Security** - Güvenlik politikaları  
+- **Auto-generated REST API** - Otomatik API'ler
+
+### Deployment
+- **Netlify** - Frontend hosting (önerilir)
+- **Vercel** - Alternatif hosting
+- **Environment Variables** - Güvenli yapılandırma
 
 ## 🤝 Katkıda Bulunma
 
@@ -173,33 +229,93 @@ nobet-sihirbazi/
 
 Bu proje MIT lisansı altında lisanslanmıştır.
 
-## 👨‍⚕️ Doktor Listesi
+## 🌟 Öne Çıkan Özellikler
 
-Sistem şu doktorlar için yapılandırılmıştır:
-- Dr. Ahmet Yılmaz
-- Dr. Ayşe Kaya
-- Dr. Mehmet Özkan
-- Dr. Fatma Demir
-- Dr. Ali Şahin
-- Dr. Zeynep Arslan
-- Dr. Mustafa Çelik
-- Dr. Elif Yıldız
-- Dr. Okan Avcı
+### ✨ Dinamik Doktor Yönetimi
+- **Sınırsız doktor** ekleme/çıkarma
+- **Otomatik kayıt**: Yeni doktor adı girdiğinizde sistem otomatik ekler
+- **Flexible sistem**: 5 doktor da, 50 doktor da desteklenir
+
+### 🚀 Performans & Güvenilirlik  
+- **Supabase PostgreSQL**: Enterprise-grade database
+- **Realtime sync**: Anında senkronizasyon
+- **Offline fallback**: İnternet kesilirse yerel çalışma
+- **Auto-backup**: Her işlem localStorage'a da kaydedilir
+
+### 📊 Gelişmiş Analytics
+- **Sistem istatistikleri**: Gerçek zamanlı metrikler
+- **Completion tracking**: Tamamlanma oranları
+- **Export capabilities**: Profesyonel raporlama
 
 ## 🔍 Sorun Giderme
 
-### Build Hataları
-- Node.js sürümünüzün 18+ olduğundan emin olun
-- `npm install` komutunu tekrar çalıştırın
+### 🚨 Yaygın Sorunlar
 
-### API Hataları
-- Netlify Functions'ın düzgün deploy edildiğinden emin olun
-- Browser console'da hata mesajlarını kontrol edin
+#### "Database bağlantı hatası"
+- `.env` dosyasındaki **Supabase URL** ve **API key**'i kontrol edin
+- Supabase projesinin **aktif** olduğunu doğrulayın
+- **Internet bağlantınızı** kontrol edin
+- Browser **Developer Tools > Network** sekmesinde hataları inceleyin
 
-### Stil Sorunları
-- Tailwind CSS'in düzgün yüklendiğinden emin olun
-- `npm run build` sonrası `dist` klasörünü kontrol edin
+#### "Tercihler kaydedilmiyor"
+- Supabase **RLS politikalarını** kontrol edin
+- `supabase-schema.sql` dosyasının **tam olarak çalıştırıldığından** emin olun
+- Browser **console**'da hata mesajlarını inceleyin
+- **Offline moda** geçerek yerel kaydetme deneyin
 
-## 📞 Destek
+#### "Admin paneline erişemiyorum"
+- Şifre: `admin2025` (**küçük harflerle**)
+- Browser **cache**'ini temizleyin
+- **Hard refresh** yapın (Ctrl+F5 / Cmd+Shift+R)
+- **Incognito/Private** modda deneyin
 
-Herhangi bir sorun yaşarsanız GitHub Issues bölümünden bildirin. 
+#### "Realtime güncellemeler çalışmıyor"
+- Supabase **Realtime** özelliğinin aktif olduğunu kontrol edin
+- Admin panelinden **Gerçek Zamanlı** butonunu açın
+- Network bağlantısının **stabil** olduğundan emin olun
+
+### 🔧 Debug Modları
+
+#### Console Debug Açma
+```javascript
+// Browser console'da çalıştırın
+localStorage.setItem('debug', 'true')
+localStorage.setItem('supabase.debug', 'true')
+```
+
+#### Supabase Bağlantı Testi
+```javascript
+// Browser console'da test edin
+import { supabase } from './src/supabaseClient.js'
+const { data, error } = await supabase.from('doctor_preferences').select('*')
+console.log('Data:', data, 'Error:', error)
+```
+
+### 📋 Sistem Gereksinimleri
+- **Node.js**: 18+ versiyonu
+- **NPM**: 8+ versiyonu  
+- **Browser**: Chrome 90+, Firefox 88+, Safari 14+
+- **Internet**: Stabil bağlantı (Supabase için)
+
+### 🔄 Yeniden Kurulum
+```bash
+# Tam temizlik ve yeniden kurulum
+rm -rf node_modules package-lock.json
+npm cache clean --force
+npm install
+```
+
+### 📞 Destek
+
+Hala sorun yaşıyorsanız:
+- 🐛 **GitHub Issues**: Hata raporları için
+- 💬 **GitHub Discussions**: Genel sorular için  
+- 📧 **Email**: [destek@nobetsihirbazi.com](mailto:destek@nobetsihirbazi.com)
+
+---
+
+**Developed with ❤️ for healthcare professionals**
+
+*Supabase ile güçlendirilmiş, doktorların hayatını kolaylaştırmak için tasarlanmış modern nöbet planlama sistemi.*
+
+🚀 **[Demo'yu görün](https://nobet-sihirbazi.netlify.app)** | 📖 **[Belgeler](https://github.com/yourusername/nobet-sihirbazi)** | 🐛 **[Bug Report](https://github.com/yourusername/nobet-sihirbazi/issues)** 
