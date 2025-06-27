@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { Calendar, Users, Clock, CheckCircle, Shield, TrendingUp, BarChart3, Loader2, AlertCircle, Download, FileText, Database, Wifi, WifiOff } from 'lucide-react'
+import { Calendar, Users, Clock, CheckCircle, Shield, TrendingUp, BarChart3, Loader2, AlertCircle, Download, FileText, Database, Wifi, WifiOff, Trash2, UserX } from 'lucide-react'
 import UserNameInput from './components/UserNameInput'
 import ScheduleCalendar from './components/ScheduleCalendar'
 import SubmitButton from './components/SubmitButton'
@@ -348,12 +348,76 @@ function App() {
     await loadDataFromSupabase()
   }
 
+  // Doktor tercihini sil
+  const deleteDoctor = async (doctorName) => {
+    if (!isAdmin) {
+      addNotification('error', 'Bu işlem için admin yetkisi gerekli!')
+      return
+    }
+
+    if (confirm(`${doctorName} adlı doktorun TÜM TERCİHLERİ silinecek! Emin misiniz?`)) {
+      try {
+        // Supabase'den sil
+        await dbOperations.deletePreferences(doctorName)
+        
+        // Local state'i güncelle
+        const newPreferences = { ...preferences }
+        delete newPreferences[doctorName]
+        setPreferences(newPreferences)
+        setAllDoctors(Object.keys(newPreferences))
+        
+        // Local backup'ı güncelle
+        localStorage.setItem('nobet-preferences-backup', JSON.stringify(newPreferences))
+        
+        addNotification('success', `${doctorName} adlı doktorun tercihleri başarıyla silindi!`)
+      } catch (error) {
+        console.error('Doktor silme hatası:', error)
+        addNotification('error', 'Doktor silinirken hata oluştu: ' + error.message)
+      }
+    }
+  }
+
+  // Test verilerini temizle
+  const clearTestData = async () => {
+    if (!isAdmin) {
+      addNotification('error', 'Bu işlem için admin yetkisi gerekli!')
+      return
+    }
+
+    if (confirm('TEST VERİLERİ (Dr. Ahmet Yılmaz, Dr. Fatma Demir) silinecek! Emin misiniz?')) {
+      try {
+        await dbOperations.clearTestData()
+        
+        // Local state'i güncelle
+        const newPreferences = { ...preferences }
+        delete newPreferences['Dr. Ahmet Yılmaz']
+        delete newPreferences['Dr. Fatma Demir']
+        setPreferences(newPreferences)
+        setAllDoctors(Object.keys(newPreferences))
+        
+        // Local backup'ı güncelle
+        localStorage.setItem('nobet-preferences-backup', JSON.stringify(newPreferences))
+        
+        addNotification('success', 'Test verileri başarıyla temizlendi!')
+      } catch (error) {
+        console.error('Test verisi temizleme hatası:', error)
+        addNotification('error', 'Test verileri temizlenirken hata: ' + error.message)
+      }
+    }
+  }
+
   // Verileri temizle
   const clearAllData = async () => {
+    if (!isAdmin) {
+      addNotification('error', 'Bu işlem için admin yetkisi gerekli!')
+      return
+    }
+
     if (confirm('TÜM VERİLER SİLİNECEK! (Supabase + Local) Emin misiniz?')) {
       try {
-        // Supabase'den temizle (Manuel SQL gerekebilir)
-        addNotification('warning', 'Supabase verilerini manuel olarak temizlemeniz gerekebilir')
+        // Supabase'den tüm tercihleri sil
+        await dbOperations.deleteAllPreferences()
+        await dbOperations.deleteSchedule()
         
         // Local storage'ı temizle
         localStorage.removeItem('nobet-preferences-backup')
@@ -363,8 +427,9 @@ function App() {
         setSchedule({})
         setAllDoctors([])
         
-        addNotification('warning', 'Yerel veriler temizlendi!')
+        addNotification('success', 'Tüm veriler başarıyla temizlendi!')
       } catch (error) {
+        console.error('Veri temizleme hatası:', error)
         addNotification('error', 'Veri temizlerken hata: ' + error.message)
       }
     }
@@ -655,6 +720,14 @@ function App() {
                   {realTimeEnabled ? <Wifi className="h-5 w-5 mr-2" /> : <WifiOff className="h-5 w-5 mr-2" />}
                   Gerçek Zamanlı: {realTimeEnabled ? 'Açık' : 'Kapalı'}
                 </button>
+
+                <button
+                  onClick={clearTestData}
+                  className="flex items-center px-6 py-3 bg-gradient-to-r from-orange-600 to-orange-700 text-white rounded-lg hover:from-orange-700 hover:to-orange-800 transition duration-200"
+                >
+                  <UserX className="h-5 w-5 mr-2" />
+                  Test Verilerini Temizle
+                </button>
               </div>
             </div>
 
@@ -689,15 +762,28 @@ function App() {
             {/* Doktor Listesi */}
             {Object.keys(preferences).length > 0 && (
               <div className="bg-white p-6 rounded-xl shadow-lg border border-gray-200">
-                <h3 className="text-lg font-bold text-gray-900 mb-4">Kayıtlı Doktorlar (Supabase'den)</h3>
+                <h3 className="text-lg font-bold text-gray-900 mb-4 flex items-center justify-between">
+                  <span>Kayıtlı Doktorlar (Supabase'den)</span>
+                  <span className="text-sm font-normal text-gray-500">
+                    {Object.keys(preferences).length} doktor
+                  </span>
+                </h3>
                 <div className="space-y-4">
                   {Object.keys(preferences).map(doctor => {
                     const pref = preferences[doctor]
+                    const isTestData = ['Dr. Ahmet Yılmaz', 'Dr. Fatma Demir'].includes(doctor)
                     return (
-                      <div key={doctor} className="border border-gray-200 rounded-lg p-4">
+                      <div key={doctor} className={`border rounded-lg p-4 ${isTestData ? 'border-orange-200 bg-orange-50' : 'border-gray-200 bg-white'}`}>
                         <div className="flex justify-between items-start">
-                          <div>
-                            <h4 className="font-bold text-gray-900">{doctor}</h4>
+                          <div className="flex-1">
+                            <div className="flex items-center">
+                              <h4 className="font-bold text-gray-900">{doctor}</h4>
+                              {isTestData && (
+                                <span className="ml-2 px-2 py-1 text-xs bg-orange-200 text-orange-800 rounded-full">
+                                  Test Verisi
+                                </span>
+                              )}
+                            </div>
                             <p className="text-sm text-gray-600">
                               Pozitif: {(pref.pozitif || []).length} gün, 
                               Negatif: {(pref.negatif || []).length} gün
@@ -705,15 +791,78 @@ function App() {
                             {pref.ozelSebepler && (
                               <p className="text-sm text-gray-500 mt-1">"{pref.ozelSebepler}"</p>
                             )}
+                            <div className="text-xs text-gray-400 mt-2">
+                              {pref.kayitTarihi && new Date(pref.kayitTarihi).toLocaleString('tr-TR')}
+                            </div>
                           </div>
-                          <div className="text-xs text-gray-400">
-                            {pref.kayitTarihi && new Date(pref.kayitTarihi).toLocaleString('tr-TR')}
+                          <div className="flex flex-col items-end space-y-2">
+                            <button
+                              onClick={() => setCurrentUserName(doctor)}
+                              className="px-3 py-1 text-xs bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 transition duration-200"
+                            >
+                              Görüntüle
+                            </button>
+                            <button
+                              onClick={() => deleteDoctor(doctor)}
+                              className="px-3 py-1 text-xs bg-red-100 text-red-700 rounded-lg hover:bg-red-200 transition duration-200 flex items-center"
+                            >
+                              <Trash2 className="h-3 w-3 mr-1" />
+                              Sil
+                            </button>
                           </div>
                         </div>
                       </div>
                     )
                   })}
                 </div>
+                
+                {/* Hızlı İşlemler */}
+                {Object.keys(preferences).length > 0 && (
+                  <div className="mt-6 p-4 bg-gray-50 rounded-lg">
+                    <h4 className="font-bold text-gray-800 mb-3">⚡ Hızlı İşlemler</h4>
+                    <div className="flex flex-wrap gap-3">
+                      <button
+                        onClick={() => {
+                          const testDoctors = Object.keys(preferences).filter(d => 
+                            ['Dr. Ahmet Yılmaz', 'Dr. Fatma Demir'].includes(d)
+                          )
+                          if (testDoctors.length > 0) {
+                            clearTestData()
+                          } else {
+                            addNotification('info', 'Test verisi bulunamadı')
+                          }
+                        }}
+                        className="px-4 py-2 text-sm bg-orange-100 text-orange-700 rounded-lg hover:bg-orange-200 transition duration-200 flex items-center"
+                      >
+                        <UserX className="h-4 w-4 mr-2" />
+                        Test Verilerini Temizle
+                      </button>
+                      <button
+                        onClick={() => {
+                          const exported = {
+                            doctors: Object.keys(preferences),
+                            totalCount: Object.keys(preferences).length,
+                            exportTime: new Date().toISOString()
+                          }
+                          const blob = new Blob([JSON.stringify(exported, null, 2)], { type: 'application/json' })
+                          const url = URL.createObjectURL(blob)
+                          const a = document.createElement('a')
+                          a.href = url
+                          a.download = `doktor-listesi-${new Date().toISOString().split('T')[0]}.json`
+                          document.body.appendChild(a)
+                          a.click()
+                          document.body.removeChild(a)
+                          URL.revokeObjectURL(url)
+                          addNotification('success', 'Doktor listesi export edildi!')
+                        }}
+                        className="px-4 py-2 text-sm bg-green-100 text-green-700 rounded-lg hover:bg-green-200 transition duration-200 flex items-center"
+                      >
+                        <Download className="h-4 w-4 mr-2" />
+                        Doktor Listesi Export
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>

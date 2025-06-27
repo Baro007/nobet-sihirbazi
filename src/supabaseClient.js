@@ -60,6 +60,57 @@ export const dbOperations = {
     }
   },
 
+  // Doktor tercihini sil
+  async deletePreferences(doctorName) {
+    try {
+      const { data, error } = await supabase
+        .from('doctor_preferences')
+        .delete()
+        .eq('doctor_name', doctorName)
+        .select()
+      
+      if (error) throw error
+      return data
+    } catch (error) {
+      console.error('Tercih silinirken hata:', error)
+      throw error
+    }
+  },
+
+  // Test verilerini temizle
+  async clearTestData() {
+    try {
+      const { data, error } = await supabase
+        .from('doctor_preferences')
+        .delete()
+        .in('doctor_name', ['Dr. Ahmet Yılmaz', 'Dr. Fatma Demir'])
+        .select()
+      
+      if (error) throw error
+      return data
+    } catch (error) {
+      console.error('Test verileri silinirken hata:', error)
+      throw error
+    }
+  },
+
+  // Tüm tercihleri sil (dikkatli kullanın)
+  async deleteAllPreferences() {
+    try {
+      const { data, error } = await supabase
+        .from('doctor_preferences')
+        .delete()
+        .neq('id', 0) // Tüm kayıtları sil
+        .select()
+      
+      if (error) throw error
+      return data
+    } catch (error) {
+      console.error('Tüm tercihler silinirken hata:', error)
+      throw error
+    }
+  },
+
   // Çizelgeyi getir
   async getSchedule() {
     try {
@@ -105,6 +156,23 @@ export const dbOperations = {
       return data
     } catch (error) {
       console.error('Çizelge kaydederken hata:', error)
+      throw error
+    }
+  },
+
+  // Çizelgeyi sil
+  async deleteSchedule() {
+    try {
+      const { data, error } = await supabase
+        .from('schedule')
+        .delete()
+        .neq('id', 0) // Tüm kayıtları sil
+        .select()
+      
+      if (error) throw error
+      return data
+    } catch (error) {
+      console.error('Çizelge silinirken hata:', error)
       throw error
     }
   },

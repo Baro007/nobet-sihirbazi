@@ -1,7 +1,7 @@
 import React from 'react'
 import { User, Users, AlertCircle, Crown, Search, CheckCircle2, TrendingUp } from 'lucide-react'
 
-function UserNameInput({ currentUserName, onUserNameChange, allDoctors, isAdmin }) {
+function UserNameInput({ currentUserName, setCurrentUserName, allDoctors, isAdmin }) {
   const completedDoctorsCount = allDoctors.filter(doctor => 
     // Burada preferences'a erişemediğimiz için sadece doktor sayısını gösteriyoruz
     true // Placeholder - gerçek implementasyonda preferences kontrolü yapılacak
@@ -33,7 +33,7 @@ function UserNameInput({ currentUserName, onUserNameChange, allDoctors, isAdmin 
             id="doctor-name"
             type="text"
             value={currentUserName}
-            onChange={(e) => onUserNameChange(e.target.value)}
+            onChange={(e) => setCurrentUserName(e.target.value)}
             placeholder={isAdmin ? "Doktor adı girin veya listeden seçin..." : "Dr. Adınız Soyadınız"}
             className="block w-full pl-10 pr-4 py-4 border-2 border-gray-300 rounded-xl shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 sm:text-lg placeholder-gray-400 transition-all duration-200 hover:border-gray-400"
             autoComplete="name"
@@ -80,7 +80,7 @@ function UserNameInput({ currentUserName, onUserNameChange, allDoctors, isAdmin 
               {allDoctors.map((doctor, index) => (
                 <button
                   key={index}
-                  onClick={() => onUserNameChange(doctor)}
+                  onClick={() => setCurrentUserName(doctor)}
                   className={`w-full text-left p-4 rounded-lg border-2 transition-all duration-200 hover:shadow-md ${
                     currentUserName === doctor
                       ? 'border-blue-500 bg-blue-50 text-blue-800 shadow-md'
@@ -199,16 +199,20 @@ function UserNameInput({ currentUserName, onUserNameChange, allDoctors, isAdmin 
           </h4>
           <ul className="text-sm text-yellow-700 space-y-2">
             <li className="flex items-center">
-              <span className="w-6 h-6 bg-yellow-200 text-yellow-800 rounded-full flex items-center justify-center text-xs font-bold mr-3">1</span>
-              Yukarıdaki alana adınızı soyadınızı yazın
+              <div className="w-2 h-2 bg-yellow-500 rounded-full mr-3"></div>
+              Yukarıdaki alana doktor adınızı yazın
             </li>
             <li className="flex items-center">
-              <span className="w-6 h-6 bg-yellow-200 text-yellow-800 rounded-full flex items-center justify-center text-xs font-bold mr-3">2</span>
-              Önceden kayıtlıysanız listeden adınızı seçin
+              <div className="w-2 h-2 bg-yellow-500 rounded-full mr-3"></div>
+              Sistem otomatik olarak takvimi görüntüleyecektir
             </li>
             <li className="flex items-center">
-              <span className="w-6 h-6 bg-yellow-200 text-yellow-800 rounded-full flex items-center justify-center text-xs font-bold mr-3">3</span>
-              Adınızı girdikten sonra tercih takvimi açılacak
+              <div className="w-2 h-2 bg-yellow-500 rounded-full mr-3"></div>
+              Tercihlerinizi belirleyip kaydedin
+            </li>
+            <li className="flex items-center">
+              <div className="w-2 h-2 bg-yellow-500 rounded-full mr-3"></div>
+              Admin çizelgeyi oluşturacaktır
             </li>
           </ul>
         </div>
