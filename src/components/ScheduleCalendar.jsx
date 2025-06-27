@@ -55,8 +55,6 @@ function ScheduleCalendar({ currentUserName, preferences, allDoctors, onSave, is
     }
   }
 
-
-
   // Tercihleri sıfırla
   const resetPreferences = () => {
     setPozitifGunler([])
@@ -108,20 +106,6 @@ function ScheduleCalendar({ currentUserName, preferences, allDoctors, onSave, is
     }
   }
 
-  // Gün stilini belirle
-  const getDayStyle = (day) => {
-    const dayNumber = day.getDate()
-    const isPozitif = pozitifGunler.includes(dayNumber)
-    const isNegatif = negatifGunler.includes(dayNumber)
-    
-    if (isPozitif) {
-      return 'rdp-day-positive'
-    } else if (isNegatif) {
-      return 'rdp-day-negative'
-    }
-    return ''
-  }
-
   // Toplam doktor sayısını say (mevcut kullanıcı dahil)
   const getTotalDoctorCount = (dayNumber) => {
     let count = 0
@@ -147,86 +131,85 @@ function ScheduleCalendar({ currentUserName, preferences, allDoctors, onSave, is
 
   return (
     <div className="space-y-6">
-      {/* Stil tanımları */}
-      <style jsx>{`
-        .rdp-day-positive {
-          background: linear-gradient(135deg, #10b981 0%, #059669 100%) !important;
-          color: white !important;
-          box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4) !important;
-          transform: scale(1.02) !important;
-        }
-        .rdp-day-negative {
-          background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%) !important;
-          color: white !important;
-          box-shadow: 0 4px 12px rgba(239, 68, 68, 0.4) !important;
-          transform: scale(1.02) !important;
-        }
-        .rdp-day {
-          position: relative;
-          cursor: pointer !important;
-          transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
-          border-radius: 8px !important;
-          min-height: 45px !important;
-          display: flex !important;
-          align-items: center !important;
-          justify-content: center !important;
-        }
-        .rdp-day:hover {
-          background-color: #f3f4f6 !important;
-          transform: scale(1.05) !important;
-          box-shadow: 0 2px 8px rgba(0,0,0,0.1) !important;
-        }
-        .rdp-day-positive:hover {
-          background: linear-gradient(135deg, #059669 0%, #047857 100%) !important;
-          transform: scale(1.08) !important;
-        }
-        .rdp-day-negative:hover {
-          background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%) !important;
-          transform: scale(1.08) !important;
-        }
-        .demand-badge {
-          position: absolute;
-          top: -6px;
-          right: -6px;
-          background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
-          color: white;
-          border-radius: 50%;
-          width: 20px;
-          height: 20px;
-          font-size: 12px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          font-weight: bold;
-          border: 2px solid white;
-          box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-        }
-        .selection-mode-pozitif .rdp-day:hover {
-          background: linear-gradient(135deg, #dcfce7 0%, #bbf7d0 100%) !important;
-          border: 2px solid #10b981 !important;
-        }
-        .selection-mode-negatif .rdp-day:hover {
-          background: linear-gradient(135deg, #fef2f2 0%, #fecaca 100%) !important;
-          border: 2px solid #ef4444 !important;
-        }
-        .stats-card {
-          background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
-          border: 1px solid #e2e8f0;
-        }
-        @media (max-width: 768px) {
+      {/* Tailwind CSS ile özel style'lar */}
+      <style dangerouslySetInnerHTML={{
+        __html: `
+          .calendar-day-positive {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%) !important;
+            color: white !important;
+            box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4) !important;
+            transform: scale(1.02) !important;
+          }
+          .calendar-day-negative {
+            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%) !important;
+            color: white !important;
+            box-shadow: 0 4px 12px rgba(239, 68, 68, 0.4) !important;
+            transform: scale(1.02) !important;
+          }
           .rdp-day {
-            min-height: 35px !important;
-            font-size: 14px !important;
+            position: relative;
+            cursor: pointer !important;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+            border-radius: 8px !important;
+            min-height: 45px !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+          }
+          .rdp-day:hover {
+            background-color: #f3f4f6 !important;
+            transform: scale(1.05) !important;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1) !important;
+          }
+          .calendar-day-positive:hover {
+            background: linear-gradient(135deg, #059669 0%, #047857 100%) !important;
+            transform: scale(1.08) !important;
+          }
+          .calendar-day-negative:hover {
+            background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%) !important;
+            transform: scale(1.08) !important;
           }
           .demand-badge {
-            width: 16px;
-            height: 16px;
-            font-size: 10px;
-            top: -4px;
-            right: -4px;
+            position: absolute;
+            top: -6px;
+            right: -6px;
+            background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+            color: white;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            font-size: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            border: 2px solid white;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+            z-index: 10;
           }
-        }
-      `}</style>
+          .selection-mode-pozitif .rdp-day:hover {
+            background: linear-gradient(135deg, #dcfce7 0%, #bbf7d0 100%) !important;
+            border: 2px solid #10b981 !important;
+          }
+          .selection-mode-negatif .rdp-day:hover {
+            background: linear-gradient(135deg, #fef2f2 0%, #fecaca 100%) !important;
+            border: 2px solid #ef4444 !important;
+          }
+          @media (max-width: 768px) {
+            .rdp-day {
+              min-height: 35px !important;
+              font-size: 14px !important;
+            }
+            .demand-badge {
+              width: 16px;
+              height: 16px;
+              font-size: 10px;
+              top: -4px;
+              right: -4px;
+            }
+          }
+        `
+      }} />
 
       {/* Success Notification */}
       {showSuccess && (
@@ -239,19 +222,19 @@ function ScheduleCalendar({ currentUserName, preferences, allDoctors, onSave, is
       {/* İstatistikler (Admin için) */}
       {isAdmin && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-          <div className="stats-card p-4 rounded-lg text-center">
+          <div className="bg-gradient-to-br from-gray-50 to-slate-100 border border-gray-200 p-4 rounded-lg text-center shadow-sm">
             <div className="text-2xl font-bold text-blue-600">{stats.totalDoctors}</div>
             <div className="text-sm text-gray-600">Toplam Doktor</div>
           </div>
-          <div className="stats-card p-4 rounded-lg text-center">
+          <div className="bg-gradient-to-br from-gray-50 to-slate-100 border border-gray-200 p-4 rounded-lg text-center shadow-sm">
             <div className="text-2xl font-bold text-green-600">{stats.completedDoctors}</div>
             <div className="text-sm text-gray-600">Tercih Girilen</div>
           </div>
-          <div className="stats-card p-4 rounded-lg text-center">
+          <div className="bg-gradient-to-br from-gray-50 to-slate-100 border border-gray-200 p-4 rounded-lg text-center shadow-sm">
             <div className="text-2xl font-bold text-orange-600">{stats.avgPositive.toFixed(1)}</div>
             <div className="text-sm text-gray-600">Ort. Pozitif</div>
           </div>
-          <div className="stats-card p-4 rounded-lg text-center">
+          <div className="bg-gradient-to-br from-gray-50 to-slate-100 border border-gray-200 p-4 rounded-lg text-center shadow-sm">
             <div className="text-2xl font-bold text-red-600">{stats.avgNegative.toFixed(1)}</div>
             <div className="text-sm text-gray-600">Ort. Negatif</div>
           </div>
@@ -291,8 +274,6 @@ function ScheduleCalendar({ currentUserName, preferences, allDoctors, onSave, is
           </button>
         </div>
 
-
-
         {/* Aktif Mod Bilgilendirmesi */}
         <div className={`p-4 rounded-lg border-2 ${
           selectionMode === 'pozitif' 
@@ -319,7 +300,7 @@ function ScheduleCalendar({ currentUserName, preferences, allDoctors, onSave, is
 
       {/* Takvim */}
       <div className={`flex justify-center selection-mode-${selectionMode}`}>
-        <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-lg">
+        <div className="bg-white rounded-xl border border-gray-200 p-4 md:p-6 shadow-lg w-full max-w-lg">
           <DayPicker
             mode="single"
             month={month}
@@ -329,8 +310,8 @@ function ScheduleCalendar({ currentUserName, preferences, allDoctors, onSave, is
               negative: negatifGunler.map(day => new Date(2025, 6, day))
             }}
             modifiersClassNames={{
-              positive: 'rdp-day-positive',
-              negative: 'rdp-day-negative'
+              positive: 'calendar-day-positive',
+              negative: 'calendar-day-negative'
             }}
             components={{
               Day: ({ date, displayMonth, ...props }) => {
@@ -342,12 +323,15 @@ function ScheduleCalendar({ currentUserName, preferences, allDoctors, onSave, is
                 return (
                   <button 
                     {...props}
-                    className={`rdp-day ${getDayStyle(date)} relative`}
-                    onClick={() => handleDayClick(date)}
+                    className={`rdp-day relative ${isPozitif ? 'calendar-day-positive' : ''} ${isNegatif ? 'calendar-day-negative' : ''}`}
+                    onClick={(e) => {
+                      e.preventDefault()
+                      handleDayClick(date)
+                    }}
                     title={`${dayNumber} Temmuz - ${totalDoctorCount} doktor bu günü istiyor`}
                     type="button"
                   >
-                    <div className="flex flex-col items-center">
+                    <div className="flex flex-col items-center relative w-full h-full">
                       <span className="text-sm font-bold">{dayNumber}</span>
                       {isPozitif && <span className="text-xs">✓</span>}
                       {isNegatif && <span className="text-xs">✗</span>}
@@ -365,7 +349,7 @@ function ScheduleCalendar({ currentUserName, preferences, allDoctors, onSave, is
           
           {/* Takvim Alt Bilgi */}
           <div className="mt-6 text-center">
-            <div className="flex justify-center space-x-6 text-sm text-gray-600">
+            <div className="flex justify-center flex-wrap gap-3 text-sm text-gray-600">
               <div className="flex items-center">
                 <div className="w-4 h-4 bg-gradient-to-r from-green-500 to-green-600 rounded-full mr-2"></div>
                 <span className="font-medium">İstediğim ({pozitifGunler.length})</span>
@@ -503,7 +487,6 @@ function ScheduleCalendar({ currentUserName, preferences, allDoctors, onSave, is
                 <span className="mr-2">•</span>
                 <span>Tekrar tıklayarak seçimi kaldırabilirsiniz</span>
               </li>
-
               <li className="flex items-start">
                 <span className="mr-2">•</span>
                 <span>Maksimum 15 pozitif, 20 negatif tercih yapabilirsiniz</span>

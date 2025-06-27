@@ -460,6 +460,34 @@ function App() {
     )
   }
 
+  // Loading state - ilk yükleme
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-gray-50 via-blue-50 to-indigo-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="bg-white rounded-xl shadow-lg p-8 max-w-md mx-auto">
+            <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-600 mx-auto mb-4"></div>
+            <h2 className="text-xl font-bold text-gray-800 mb-2">NöbetSihirbazı Yükleniyor...</h2>
+            <p className="text-gray-600 text-sm mb-4">Supabase bağlantısı kontrol ediliyor</p>
+            <div className="flex items-center justify-center text-sm">
+              {isOnline ? (
+                <div className="flex items-center text-green-600">
+                  <Wifi className="h-4 w-4 mr-1" />
+                  <span>Bağlantı durumu: Online</span>
+                </div>
+              ) : (
+                <div className="flex items-center text-orange-600">
+                  <WifiOff className="h-4 w-4 mr-1" />
+                  <span>Bağlantı durumu: Offline</span>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 via-blue-50 to-indigo-50">
       {/* Notification System */}
@@ -633,6 +661,7 @@ function App() {
               currentUserName={currentUserName}
               setCurrentUserName={setCurrentUserName}
               allDoctors={allDoctors}
+              isAdmin={isAdmin}
             />
             
             <ScheduleCalendar 
