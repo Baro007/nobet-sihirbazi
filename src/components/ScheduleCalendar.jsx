@@ -3,23 +3,26 @@ import { DayPicker } from 'react-day-picker'
 import { Save, RotateCcw } from 'lucide-react'
 import 'react-day-picker/dist/style.css'
 
-function ScheduleCalendar({ selectedDoctor, preferences, onSave }) {
+function ScheduleCalendar({ currentUserName, preferences, allDoctors, onSave }) {
   const [pozitifGunler, setPozitifGunler] = useState([])
   const [negatifGunler, setNegatifGunler] = useState([])
+  const [ozelSebepler, setOzelSebepler] = useState('')
 
   // Temmuz 2025
   const month = new Date(2025, 6) // 6 = Temmuz (0-indexed)
 
-  // Doktor değiştiğinde tercihleri yükle
+  // Kullanıcı değiştiğinde tercihleri yükle
   useEffect(() => {
-    if (selectedDoctor && preferences[selectedDoctor]) {
-      setPozitifGunler(preferences[selectedDoctor].pozitif || [])
-      setNegatifGunler(preferences[selectedDoctor].negatif || [])
+    if (currentUserName && preferences[currentUserName]) {
+      setPozitifGunler(preferences[currentUserName].pozitif || [])
+      setNegatifGunler(preferences[currentUserName].negatif || [])
+      setOzelSebepler(preferences[currentUserName].ozelSebepler || '')
     } else {
       setPozitifGunler([])
       setNegatifGunler([])
+      setOzelSebepler('')
     }
-  }, [selectedDoctor, preferences])
+  }, [currentUserName, preferences])
 
   // Gün tıklama işlemi
   const handleDayClick = (day) => {
@@ -46,16 +49,18 @@ function ScheduleCalendar({ selectedDoctor, preferences, onSave }) {
   const resetPreferences = () => {
     setPozitifGunler([])
     setNegatifGunler([])
+    setOzelSebepler('')
   }
 
   // Kaydet
   const handleSave = async () => {
-    const success = await onSave(pozitifGunler, negatifGunler)
+    const success = await onSave(pozitifGunler, negatifGunler, ozelSebepler)
     if (!success) {
       // Hata durumunda tercihleri geri yükle
-      if (selectedDoctor && preferences[selectedDoctor]) {
-        setPozitifGunler(preferences[selectedDoctor].pozitif || [])
-        setNegatifGunler(preferences[selectedDoctor].negatif || [])
+      if (currentUserName && preferences[currentUserName]) {
+        setPozitifGunler(preferences[currentUserName].pozitif || [])
+        setNegatifGunler(preferences[currentUserName].negatif || [])
+        setOzelSebepler(preferences[currentUserName].ozelSebepler || '')
       }
     }
   }
@@ -78,7 +83,7 @@ function ScheduleCalendar({ selectedDoctor, preferences, onSave }) {
   const getOtherDoctorCount = (dayNumber) => {
     let count = 0
     Object.keys(preferences).forEach(doctor => {
-      if (doctor !== selectedDoctor && preferences[doctor].pozitif?.includes(dayNumber)) {
+      if (doctor !== currentUserName && preferences[doctor].pozitif?.includes(dayNumber)) {
         count++
       }
     })
@@ -181,6 +186,24 @@ function ScheduleCalendar({ selectedDoctor, preferences, onSave }) {
         </div>
       </div>
 
+      {/* Özel Sebepler */}
+      <div className="bg-gray-50 p-4 rounded-lg">
+        <label htmlFor="ozel-sebepler" className="block text-sm font-medium text-gray-700 mb-2">
+          Özel Sebepler ve Mazeretler (İsteğe Bağlı)
+        </label>
+        <textarea
+          id="ozel-sebepler"
+          value={ozelSebepler}
+          onChange={(e) => setOzelSebepler(e.target.value)}
+          placeholder="Örn: 15-20 Temmuz arası tatilde olacağım, Cumartesi günleri mümkünse nöbet tutmak istemiyorum..."
+          rows={3}
+          className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm resize-none"
+        />
+        <p className="text-xs text-gray-500 mt-1">
+          Özel durumlarınızı, mazeretlerinizi veya tercihlerinizle ilgili ek bilgileri buraya yazabilirsiniz.
+        </p>
+      </div>
+
       {/* Açıklama */}
       <div className="bg-blue-50 p-4 rounded-lg">
         <h4 className="font-medium text-blue-900 mb-2">Nasıl Kullanılır:</h4>
@@ -189,6 +212,7 @@ function ScheduleCalendar({ selectedDoctor, preferences, onSave }) {
           <li>• Yeşil: Nöbet tutmak istediğiniz günler</li>
           <li>• Kırmızı: Nöbet tutmak istemediğiniz günler</li>
           <li>• Mavi sayılar: O günü isteyen diğer doktor sayısı</li>
+          <li>• Özel sebepler alanında ek bilgilerinizi yazın</li>
           <li>• Değişiklik sonrası mutlaka "Kaydet" butonuna tıklayın</li>
         </ul>
       </div>

@@ -11,7 +11,7 @@ export default async (req, context) => {
   try {
     const store = getStore('nobet-data')
     const body = await req.json()
-    const { doktorAdi, pozitifGunler, negatifGunler } = body
+    const { doktorAdi, pozitifGunler, negatifGunler, ozelSebepler } = body
 
     if (!doktorAdi) {
       return new Response(JSON.stringify({ error: 'Doktor adı gerekli' }), {
@@ -26,7 +26,9 @@ export default async (req, context) => {
     // Doktorun tercihlerini güncelle
     preferences[doktorAdi] = {
       pozitif: pozitifGunler || [],
-      negatif: negatifGunler || []
+      negatif: negatifGunler || [],
+      ozelSebepler: ozelSebepler || '',
+      kayitTarihi: new Date().toISOString()
     }
 
     // Güncellenmiş tercihleri kaydet

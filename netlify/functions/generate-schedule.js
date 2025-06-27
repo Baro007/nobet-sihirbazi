@@ -1,16 +1,6 @@
 import { getStore } from '@netlify/blobs'
 
-const DOCTORS = [
-  'Dr. Ahmet Yılmaz',
-  'Dr. Ayşe Kaya', 
-  'Dr. Mehmet Özkan',
-  'Dr. Fatma Demir',
-  'Dr. Ali Şahin',
-  'Dr. Zeynep Arslan',
-  'Dr. Mustafa Çelik',
-  'Dr. Elif Yıldız',
-  'Dr. Okan Avcı'
-]
+// Dinamik doktor listesi - preferences'tan alınacak
 
 const MAX_SHIFTS_PER_DOCTOR = 8
 const TARGET_SHIFTS_PER_DOCTOR = 7
@@ -76,7 +66,7 @@ function isDoctorEligible(doctor, day, preferences, currentCounts, schedule) {
 }
 
 // Dengeleme kuralı uygula
-function applyBalancingRule(schedule, currentCounts) {
+function applyBalancingRule(schedule, currentCounts, DOCTORS) {
   const lowShiftDoctors = DOCTORS.filter(doctor => 
     (currentCounts[doctor] || 0) < TARGET_SHIFTS_PER_DOCTOR
   )
@@ -140,6 +130,24 @@ export default async (req, context) => {
     // Tercihleri al
     const preferences = await store.get('preferences') || {}
     
+    // Dinamik doktor listesini oluştur
+    const DOCTORS = Object.keys(preferences)
+    
+    if (DOCTORS.length === 0) {
+      return new Response(JSON.stringify({
+        success: false,
+        error: 'Henüz hiç doktor tercihi girilmemiş'
+      }), {
+        status: 400,
+        headers: { 
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+          'Access-Control-Allow-Headers': 'Content-Type'
+        }
+      })
+    }
+    
     // Nöbet sayılarını takip et
     const currentCounts = {}
     DOCTORS.forEach(doctor => {
@@ -191,7 +199,7 @@ export default async (req, context) => {
     }
     
     // Dengeleme kuralını uygula
-    applyBalancingRule(schedule, currentCounts)
+    applyBalancingRule(schedule, currentCounts, DOCTORS)
     
     // Çizelgeyi kaydet
     await store.set('schedule', schedule)
