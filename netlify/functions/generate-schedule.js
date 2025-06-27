@@ -1,4 +1,4 @@
-import { getStore } from '@netlify/blobs'
+const { getStore } = require('@netlify/blobs')
 
 // Dinamik doktor listesi - preferences'tan alınacak
 
@@ -116,36 +116,47 @@ function applyBalancingRule(schedule, currentCounts, DOCTORS) {
   return schedule
 }
 
-export default async (req, context) => {
+exports.handler = async (event, context) => {
+  const req = {
+    method: event.httpMethod,
+    json: () => JSON.parse(event.body || '{}')
+  }
+  
   if (req.method !== 'POST') {
-    return new Response(JSON.stringify({ error: 'Method not allowed' }), {
-      status: 405,
-      headers: { 'Content-Type': 'application/json' }
-    })
+    return {
+      statusCode: 405,
+      headers: { 
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*'
+      },
+      body: JSON.stringify({ error: 'Method not allowed' })
+    }
   }
 
   try {
     const store = getStore('nobet-data')
     
     // Tercihleri al
-    const preferences = await store.get('preferences') || {}
+    const rawPreferences = await store.get('preferences')
+    const preferences = rawPreferences ? (typeof rawPreferences === 'string' ? JSON.parse(rawPreferences) : rawPreferences) : {}
     
     // Dinamik doktor listesini oluştur
     const DOCTORS = Object.keys(preferences)
     
     if (DOCTORS.length === 0) {
-      return new Response(JSON.stringify({
-        success: false,
-        error: 'Henüz hiç doktor tercihi girilmemiş'
-      }), {
-        status: 400,
+      return {
+        statusCode: 400,
         headers: { 
           'Content-Type': 'application/json',
           'Access-Control-Allow-Origin': '*',
           'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
           'Access-Control-Allow-Headers': 'Content-Type'
-        }
-      })
+        },
+        body: JSON.stringify({
+          success: false,
+          error: 'Henüz hiç doktor tercihi girilmemiş'
+        })
+      }
     }
     
     // Nöbet sayılarını takip et
@@ -204,25 +215,30 @@ export default async (req, context) => {
     // Çizelgeyi kaydet
     await store.set('schedule', schedule)
     
-    return new Response(JSON.stringify({
-      success: true,
-      schedule,
-      statistics: currentCounts,
-      message: 'Nöbet çizelgesi başarıyla oluşturuldu'
-    }), {
-      status: 200,
+    return {
+      statusCode: 200,
       headers: { 
         'Content-Type': 'application/json',
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type'
-      }
-    })
+      },
+      body: JSON.stringify({
+        success: true,
+        schedule,
+        statistics: currentCounts,
+        message: 'Nöbet çizelgesi başarıyla oluşturuldu'
+      })
+    }
   } catch (error) {
     console.error('Generate schedule error:', error)
-    return new Response(JSON.stringify({ error: 'Internal server error' }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' }
-    })
+    return {
+      statusCode: 500,
+      headers: { 
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*'
+      },
+      body: JSON.stringify({ error: 'Internal server error' })
+    }
   }
 } 
