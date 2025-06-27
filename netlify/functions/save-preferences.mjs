@@ -1,32 +1,30 @@
-const { getStore } = require('@netlify/blobs')
+import { getStore } from '@netlify/blobs'
 
-exports.handler = async (event, context) => {
+export default async (request, context) => {
   // CORS preflight handler
-  if (event.httpMethod === 'OPTIONS') {
-    return {
-      statusCode: 200,
+  if (request.method === 'OPTIONS') {
+    return new Response(null, {
+      status: 200,
       headers: {
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type',
         'Access-Control-Max-Age': '3600'
-      },
-      body: ''
-    }
+      }
+    })
   }
 
-  if (event.httpMethod !== 'POST') {
-    return {
-      statusCode: 405,
+  if (request.method !== 'POST') {
+    return new Response(JSON.stringify({ 
+      success: false,
+      error: 'Method not allowed. Only POST requests are supported.' 
+    }), {
+      status: 405,
       headers: { 
         'Content-Type': 'application/json',
         'Access-Control-Allow-Origin': '*'
-      },
-      body: JSON.stringify({ 
-        success: false,
-        error: 'Method not allowed. Only POST requests are supported.' 
-      })
-    }
+      }
+    })
   }
 
   try {
@@ -35,67 +33,63 @@ exports.handler = async (event, context) => {
     // Request body parsing
     let body
     try {
-      body = JSON.parse(event.body || '{}')
+      body = await request.json()
       console.log('Request body parsed:', JSON.stringify(body, null, 2))
     } catch (parseError) {
       console.error('JSON parse error:', parseError)
-      return {
-        statusCode: 400,
+      return new Response(JSON.stringify({ 
+        success: false,
+        error: 'Invalid JSON in request body' 
+      }), {
+        status: 400,
         headers: { 
           'Content-Type': 'application/json',
           'Access-Control-Allow-Origin': '*'
-        },
-        body: JSON.stringify({ 
-          success: false,
-          error: 'Invalid JSON in request body' 
-        })
-      }
+        }
+      })
     }
 
     const { doktorAdi, pozitifGunler, negatifGunler, ozelSebepler } = body
 
     // Validation
     if (!doktorAdi || typeof doktorAdi !== 'string' || !doktorAdi.trim()) {
-      return {
-        statusCode: 400,
+      return new Response(JSON.stringify({ 
+        success: false,
+        error: 'Doktor adı gerekli ve boş olamaz' 
+      }), {
+        status: 400,
         headers: { 
           'Content-Type': 'application/json',
           'Access-Control-Allow-Origin': '*'
-        },
-        body: JSON.stringify({ 
-          success: false,
-          error: 'Doktor adı gerekli ve boş olamaz' 
-        })
-      }
+        }
+      })
     }
 
     // Array validation
     if (pozitifGunler && !Array.isArray(pozitifGunler)) {
-      return {
-        statusCode: 400,
+      return new Response(JSON.stringify({ 
+        success: false,
+        error: 'Pozitif günler array formatında olmalı' 
+      }), {
+        status: 400,
         headers: { 
           'Content-Type': 'application/json',
           'Access-Control-Allow-Origin': '*'
-        },
-        body: JSON.stringify({ 
-          success: false,
-          error: 'Pozitif günler array formatında olmalı' 
-        })
-      }
+        }
+      })
     }
 
     if (negatifGunler && !Array.isArray(negatifGunler)) {
-      return {
-        statusCode: 400,
+      return new Response(JSON.stringify({ 
+        success: false,
+        error: 'Negatif günler array formatında olmalı' 
+      }), {
+        status: 400,
         headers: { 
           'Content-Type': 'application/json',
           'Access-Control-Allow-Origin': '*'
-        },
-        body: JSON.stringify({ 
-          success: false,
-          error: 'Negatif günler array formatında olmalı' 
-        })
-      }
+        }
+      })
     }
 
     // Store initialization
@@ -105,17 +99,16 @@ exports.handler = async (event, context) => {
       console.log('Store initialized successfully')
     } catch (storeError) {
       console.error('Store initialization error:', storeError)
-      return {
-        statusCode: 500,
+      return new Response(JSON.stringify({ 
+        success: false,
+        error: 'Database connection failed' 
+      }), {
+        status: 500,
         headers: { 
           'Content-Type': 'application/json',
           'Access-Control-Allow-Origin': '*'
-        },
-        body: JSON.stringify({ 
-          success: false,
-          error: 'Database connection failed' 
-        })
-      }
+        }
+      })
     }
 
     // Get existing preferences
@@ -146,49 +139,46 @@ exports.handler = async (event, context) => {
       console.log('Preferences saved successfully')
     } catch (saveError) {
       console.error('Error saving preferences:', saveError)
-      return {
-        statusCode: 500,
+      return new Response(JSON.stringify({ 
+        success: false,
+        error: 'Database save failed: ' + saveError.message 
+      }), {
+        status: 500,
         headers: { 
           'Content-Type': 'application/json',
           'Access-Control-Allow-Origin': '*'
-        },
-        body: JSON.stringify({ 
-          success: false,
-          error: 'Database save failed: ' + saveError.message 
-        })
-      }
+        }
+      })
     }
 
-    return {
-      statusCode: 200,
+    return new Response(JSON.stringify({ 
+      success: true, 
+      message: 'Tercihler başarıyla kaydedildi',
+      data: {
+        doktor: doktorAdi.trim(),
+        pozitifCount: (pozitifGunler || []).length,
+        negatifCount: (negatifGunler || []).length
+      }
+    }), {
+      status: 200,
       headers: { 
         'Content-Type': 'application/json',
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type'
-      },
-      body: JSON.stringify({ 
-        success: true, 
-        message: 'Tercihler başarıyla kaydedildi',
-        data: {
-          doktor: doktorAdi.trim(),
-          pozitifCount: (pozitifGunler || []).length,
-          negatifCount: (negatifGunler || []).length
-        }
-      })
-    }
+      }
+    })
   } catch (error) {
     console.error('Unexpected error in save-preferences:', error)
-    return {
-      statusCode: 500,
+    return new Response(JSON.stringify({ 
+      success: false,
+      error: 'Internal server error: ' + error.message 
+    }), {
+      status: 500,
       headers: { 
         'Content-Type': 'application/json',
         'Access-Control-Allow-Origin': '*'
-      },
-      body: JSON.stringify({ 
-        success: false,
-        error: 'Internal server error: ' + error.message 
-      })
-    }
+      }
+    })
   }
 } 
