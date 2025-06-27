@@ -55,40 +55,7 @@ function ScheduleCalendar({ currentUserName, preferences, allDoctors, onSave, is
     }
   }
 
-  // Hızlı seçim fonksiyonları
-  const quickSelectWeekends = () => {
-    const weekends = []
-    for (let day = 1; day <= 31; day++) {
-      const date = new Date(2025, 6, day)
-      if (date.getDay() === 0 || date.getDay() === 6) { // Pazar veya Cumartesi
-        weekends.push(day)
-      }
-    }
-    if (selectionMode === 'pozitif') {
-      setPozitifGunler([...new Set([...pozitifGunler, ...weekends])])
-      setNegatifGunler(negatifGunler.filter(d => !weekends.includes(d)))
-    } else {
-      setNegatifGunler([...new Set([...negatifGunler, ...weekends])])
-      setPozitifGunler(pozitifGunler.filter(d => !weekends.includes(d)))
-    }
-  }
 
-  const quickSelectWeekdays = () => {
-    const weekdays = []
-    for (let day = 1; day <= 31; day++) {
-      const date = new Date(2025, 6, day)
-      if (date.getDay() >= 1 && date.getDay() <= 5) { // Pazartesi-Cuma
-        weekdays.push(day)
-      }
-    }
-    if (selectionMode === 'pozitif') {
-      setPozitifGunler([...new Set([...pozitifGunler, ...weekdays])])
-      setNegatifGunler(negatifGunler.filter(d => !weekdays.includes(d)))
-    } else {
-      setNegatifGunler([...new Set([...negatifGunler, ...weekdays])])
-      setPozitifGunler(pozitifGunler.filter(d => !weekdays.includes(d)))
-    }
-  }
 
   // Tercihleri sıfırla
   const resetPreferences = () => {
@@ -324,21 +291,7 @@ function ScheduleCalendar({ currentUserName, preferences, allDoctors, onSave, is
           </button>
         </div>
 
-        {/* Hızlı Seçim Butonları */}
-        <div className="flex flex-wrap gap-2 mb-4">
-          <button
-            onClick={quickSelectWeekends}
-            className="px-3 py-1 text-xs bg-purple-100 text-purple-700 rounded-full hover:bg-purple-200 transition duration-200"
-          >
-            🎯 Hafta Sonları
-          </button>
-          <button
-            onClick={quickSelectWeekdays}
-            className="px-3 py-1 text-xs bg-blue-100 text-blue-700 rounded-full hover:bg-blue-200 transition duration-200"
-          >
-            📅 Hafta İçi
-          </button>
-        </div>
+
 
         {/* Aktif Mod Bilgilendirmesi */}
         <div className={`p-4 rounded-lg border-2 ${
@@ -359,7 +312,7 @@ function ScheduleCalendar({ currentUserName, preferences, allDoctors, onSave, is
             selectionMode === 'pozitif' ? 'text-green-600' : 'text-red-600'
           }`}>
             • Günlere tıklayarak seçim yapın • Tekrar tıklayarak seçimi kaldırabilirsiniz
-            • Mavi sayılar: O günü isteyen doktor sayısı • Hızlı seçim butonlarını kullanabilirsiniz
+            • Mavi sayılar: O günü isteyen doktor sayısı
           </p>
         </div>
       </div>
@@ -387,23 +340,21 @@ function ScheduleCalendar({ currentUserName, preferences, allDoctors, onSave, is
                 const isNegatif = negatifGunler.includes(dayNumber)
                 
                 return (
-                  <div className="relative">
-                    <button 
-                      {...props} 
-                      className={`rdp-day ${getDayStyle(date)}`}
-                      title={`${dayNumber} Temmuz - ${totalDoctorCount} doktor bu günü istiyor`}
-                    >
-                      <div className="flex flex-col items-center">
-                        <span className="text-sm font-bold">{dayNumber}</span>
-                        {isPozitif && <span className="text-xs">✓</span>}
-                        {isNegatif && <span className="text-xs">✗</span>}
-                      </div>
-                      {totalDoctorCount > 0 && (
-                        <span className="demand-badge" title={`${totalDoctorCount} doktor bu günü istiyor`}>
-                          {totalDoctorCount}
-                        </span>
-                      )}
-                    </button>
+                  <div 
+                    className={`relative rdp-day ${getDayStyle(date)}`}
+                    title={`${dayNumber} Temmuz - ${totalDoctorCount} doktor bu günü istiyor`}
+                    {...props}
+                  >
+                    <div className="flex flex-col items-center">
+                      <span className="text-sm font-bold">{dayNumber}</span>
+                      {isPozitif && <span className="text-xs">✓</span>}
+                      {isNegatif && <span className="text-xs">✗</span>}
+                    </div>
+                    {totalDoctorCount > 0 && (
+                      <span className="demand-badge" title={`${totalDoctorCount} doktor bu günü istiyor`}>
+                        {totalDoctorCount}
+                      </span>
+                    )}
                   </div>
                 )
               }
@@ -550,10 +501,7 @@ function ScheduleCalendar({ currentUserName, preferences, allDoctors, onSave, is
                 <span className="mr-2">•</span>
                 <span>Tekrar tıklayarak seçimi kaldırabilirsiniz</span>
               </li>
-              <li className="flex items-start">
-                <span className="mr-2">•</span>
-                <span>Hızlı seçim butonlarıyla toplu seçim yapabilirsiniz</span>
-              </li>
+
               <li className="flex items-start">
                 <span className="mr-2">•</span>
                 <span>Maksimum 15 pozitif, 20 negatif tercih yapabilirsiniz</span>
