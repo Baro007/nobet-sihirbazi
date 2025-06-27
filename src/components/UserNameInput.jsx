@@ -1,7 +1,7 @@
 import React from 'react'
 import { User, Users, AlertCircle } from 'lucide-react'
 
-function UserNameInput({ currentUserName, onUserNameChange, allDoctors }) {
+function UserNameInput({ currentUserName, onUserNameChange, allDoctors, isAdmin }) {
   return (
     <div className="space-y-4">
       <div>
@@ -49,15 +49,27 @@ function UserNameInput({ currentUserName, onUserNameChange, allDoctors }) {
         </div>
       )}
 
-      <div className="bg-yellow-50 p-4 rounded-lg">
+      <div className={`p-4 rounded-lg ${isAdmin ? 'bg-green-50' : 'bg-yellow-50'}`}>
         <div className="flex items-start">
-          <AlertCircle className="h-5 w-5 text-yellow-400 mt-0.5 mr-2" />
+          <AlertCircle className={`h-5 w-5 mt-0.5 mr-2 ${isAdmin ? 'text-green-400' : 'text-yellow-400'}`} />
           <div>
-            <h4 className="font-medium text-yellow-800">Bilgilendirme</h4>
-            <p className="text-sm text-yellow-700 mt-1">
-              • Adınızı girdikten sonra takvim görünecektir<br/>
-              • Sistem dinamiktir, istediğiniz kadar doktor eklenebilir<br/>
-              • Her doktorun kendi tercihlerini girmesi gerekir
+            <h4 className={`font-medium ${isAdmin ? 'text-green-800' : 'text-yellow-800'}`}>
+              {isAdmin ? '👑 Admin Paneli' : 'Bilgilendirme'}
+            </h4>
+            <p className={`text-sm mt-1 ${isAdmin ? 'text-green-700' : 'text-yellow-700'}`}>
+              {isAdmin ? (
+                <>
+                  • Admin olarak tüm doktorların tercihlerini görebilirsiniz<br/>
+                  • Tercih durumunu takip edip çizelge oluşturabilirsiniz<br/>
+                  • Herhangi bir doktor adı girerek onun tercihlerini görüntüleyebilirsiniz
+                </>
+              ) : (
+                <>
+                  • Adınızı girdikten sonra takvim görünecektir<br/>
+                  • Sistem dinamiktir, istediğiniz kadar doktor eklenebilir<br/>
+                  • Her doktorun kendi tercihlerini girmesi gerekir
+                </>
+              )}
             </p>
           </div>
         </div>

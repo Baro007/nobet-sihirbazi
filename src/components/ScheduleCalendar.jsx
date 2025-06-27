@@ -3,7 +3,7 @@ import { DayPicker } from 'react-day-picker'
 import { Save, RotateCcw } from 'lucide-react'
 import 'react-day-picker/dist/style.css'
 
-function ScheduleCalendar({ currentUserName, preferences, allDoctors, onSave }) {
+function ScheduleCalendar({ currentUserName, preferences, allDoctors, onSave, isAdmin }) {
   const [pozitifGunler, setPozitifGunler] = useState([])
   const [negatifGunler, setNegatifGunler] = useState([])
   const [ozelSebepler, setOzelSebepler] = useState('')
@@ -52,8 +52,28 @@ function ScheduleCalendar({ currentUserName, preferences, allDoctors, onSave }) 
     setOzelSebepler('')
   }
 
+  // Validation
+  const isValidPreferences = () => {
+    if (pozitifGunler.length === 0 && negatifGunler.length === 0) {
+      return { valid: false, message: 'Lütfen en az bir gün için tercih belirtin!' }
+    }
+    if (pozitifGunler.length > 15) {
+      return { valid: false, message: 'Çok fazla pozitif tercih! Maksimum 15 gün seçebilirsiniz.' }
+    }
+    if (negatifGunler.length > 20) {
+      return { valid: false, message: 'Çok fazla negatif tercih! Maksimum 20 gün seçebilirsiniz.' }
+    }
+    return { valid: true, message: '' }
+  }
+
   // Kaydet
   const handleSave = async () => {
+    const validation = isValidPreferences()
+    if (!validation.valid) {
+      alert(validation.message)
+      return
+    }
+
     const success = await onSave(pozitifGunler, negatifGunler, ozelSebepler)
     if (!success) {
       // Hata durumunda tercihleri geri yükle
@@ -170,13 +190,23 @@ function ScheduleCalendar({ currentUserName, preferences, allDoctors, onSave }) 
 
       {/* İstatistikler */}
       <div className="grid grid-cols-3 gap-4 text-center">
-        <div className="bg-green-50 p-4 rounded-lg">
-          <div className="text-2xl font-bold text-green-600">{pozitifGunler.length}</div>
-          <div className="text-sm text-green-700">İstediğim Günler</div>
+        <div className={`p-4 rounded-lg ${pozitifGunler.length > 15 ? 'bg-red-50 border border-red-200' : 'bg-green-50'}`}>
+          <div className={`text-2xl font-bold ${pozitifGunler.length > 15 ? 'text-red-600' : 'text-green-600'}`}>
+            {pozitifGunler.length}
+          </div>
+          <div className={`text-sm ${pozitifGunler.length > 15 ? 'text-red-700' : 'text-green-700'}`}>
+            İstediğim Günler
+            {pozitifGunler.length > 15 && <div className="text-xs">⚠️ Çok fazla!</div>}
+          </div>
         </div>
-        <div className="bg-red-50 p-4 rounded-lg">
-          <div className="text-2xl font-bold text-red-600">{negatifGunler.length}</div>
-          <div className="text-sm text-red-700">İstemediğim Günler</div>
+        <div className={`p-4 rounded-lg ${negatifGunler.length > 20 ? 'bg-red-50 border border-red-200' : 'bg-red-50'}`}>
+          <div className={`text-2xl font-bold ${negatifGunler.length > 20 ? 'text-red-800' : 'text-red-600'}`}>
+            {negatifGunler.length}
+          </div>
+          <div className={`text-sm ${negatifGunler.length > 20 ? 'text-red-800' : 'text-red-700'}`}>
+            İstemediğim Günler
+            {negatifGunler.length > 20 && <div className="text-xs">⚠️ Çok fazla!</div>}
+          </div>
         </div>
         <div className="bg-gray-50 p-4 rounded-lg">
           <div className="text-2xl font-bold text-gray-600">
@@ -185,6 +215,29 @@ function ScheduleCalendar({ currentUserName, preferences, allDoctors, onSave }) 
           <div className="text-sm text-gray-700">Fark Etmeyen</div>
         </div>
       </div>
+
+      {/* Validation Feedback */}
+      {(() => {
+        const validation = isValidPreferences()
+        if (!validation.valid) {
+          return (
+            <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+              <p className="text-sm text-red-700 font-medium">
+                ⚠️ {validation.message}
+              </p>
+            </div>
+          )
+        } else if (pozitifGunler.length > 0 || negatifGunler.length > 0) {
+          return (
+            <div className="bg-green-50 border border-green-200 rounded-lg p-3">
+              <p className="text-sm text-green-700">
+                ✅ Tercihleriniz geçerli! Kaydetmek için aşağıdaki butona tıklayın.
+              </p>
+            </div>
+          )
+        }
+        return null
+      })()}
 
       {/* Özel Sebepler */}
       <div className="bg-gray-50 p-4 rounded-lg">
@@ -229,10 +282,15 @@ function ScheduleCalendar({ currentUserName, preferences, allDoctors, onSave }) 
         
         <button
           onClick={handleSave}
-          className="flex items-center px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition duration-200"
+          disabled={!isValidPreferences().valid}
+          className={`flex items-center px-6 py-2 rounded-md transition duration-200 ${
+            isValidPreferences().valid
+              ? 'bg-blue-600 text-white hover:bg-blue-700 shadow-md hover:shadow-lg'
+              : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+          }`}
         >
           <Save className="h-4 w-4 mr-2" />
-          Tercihlerimi Kaydet
+          {isValidPreferences().valid ? 'Tercihlerimi Kaydet' : 'Geçersiz Tercihler'}
         </button>
       </div>
     </div>

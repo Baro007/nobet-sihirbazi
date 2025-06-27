@@ -16,7 +16,7 @@ function getDayName(day) {
   return days[dayOfWeek]
 }
 
-function ScheduleDisplay({ schedule }) {
+function ScheduleDisplay({ schedule, isAdmin }) {
   // Çizelge boşsa
   if (!schedule || Object.keys(schedule).length === 0) {
     return (
@@ -26,8 +26,11 @@ function ScheduleDisplay({ schedule }) {
           Henüz Nöbet Çizelgesi Oluşturulmamış
         </h3>
         <p className="text-gray-600">
-          Doktorların tercihlerini topladıktan sonra "Çizelge Oluştur" butonuna tıklayarak 
-          nöbet çizelgesini oluşturabilirsiniz.
+          {isAdmin ? (
+            'Admin olarak "Nöbet Çizelgesi Yönetimi" sekmesinden çizelge oluşturabilirsiniz.'
+          ) : (
+            'Doktorların tercihlerini toplandıktan sonra admin tarafından nöbet çizelgesi oluşturulacaktır.'
+          )}
         </p>
       </div>
     )
