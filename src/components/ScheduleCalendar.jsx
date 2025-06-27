@@ -333,17 +333,19 @@ function ScheduleCalendar({ currentUserName, preferences, allDoctors, onSave, is
               negative: 'rdp-day-negative'
             }}
             components={{
-              Day: ({ date, ...props }) => {
+              Day: ({ date, displayMonth, ...props }) => {
                 const dayNumber = date.getDate()
                 const totalDoctorCount = getTotalDoctorCount(dayNumber)
                 const isPozitif = pozitifGunler.includes(dayNumber)
                 const isNegatif = negatifGunler.includes(dayNumber)
                 
                 return (
-                  <div 
-                    className={`relative rdp-day ${getDayStyle(date)}`}
-                    title={`${dayNumber} Temmuz - ${totalDoctorCount} doktor bu günü istiyor`}
+                  <button 
                     {...props}
+                    className={`rdp-day ${getDayStyle(date)} relative`}
+                    onClick={() => handleDayClick(date)}
+                    title={`${dayNumber} Temmuz - ${totalDoctorCount} doktor bu günü istiyor`}
+                    type="button"
                   >
                     <div className="flex flex-col items-center">
                       <span className="text-sm font-bold">{dayNumber}</span>
@@ -355,7 +357,7 @@ function ScheduleCalendar({ currentUserName, preferences, allDoctors, onSave, is
                         {totalDoctorCount}
                       </span>
                     )}
-                  </div>
+                  </button>
                 )
               }
             }}
