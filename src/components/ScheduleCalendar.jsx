@@ -45,12 +45,19 @@ function ScheduleCalendar({ currentUserName, preferences, allDoctors, onSave, is
     }
   }
 
-  // Sürükleme ile seçim
-  const handleDragSelect = (endDay) => {
-    if (!isDraggingRef.current || dragStartDay === null) return
+  // Sürükleme ve tıklama olaylarını yönet
+  const handleMouseDown = (dayNumber) => {
+    setDragStartDay(dayNumber)
+  }
 
-    const start = Math.min(dragStartDay, endDay)
-    const end = Math.max(dragStartDay, endDay)
+  const handleMouseEnter = (dayNumber) => {
+    if (dragStartDay === null) return // Fare basılı değilse bir şey yapma
+
+    // Fare basılıyken başka bir güne girildi, bu bir sürüklemedir.
+    isDraggingRef.current = true
+
+    const start = Math.min(dragStartDay, dayNumber)
+    const end = Math.max(dragStartDay, dayNumber)
     const newSelectedDays = []
     for (let i = start; i <= end; i++) {
       newSelectedDays.push(i)
@@ -69,24 +76,23 @@ function ScheduleCalendar({ currentUserName, preferences, allDoctors, onSave, is
     }
   }
 
-  const handleMouseDown = (dayNumber) => {
-    isDraggingRef.current = true
-    setDragStartDay(dayNumber)
-  }
-
   const handleMouseUp = (dayNumber) => {
-    // Eğer sürükleme başlangıcı ile bitişi aynıysa, bunu tek tık olarak kabul et
-    if (isDraggingRef.current && dragStartDay === dayNumber) {
+    // Eğer sürükleme referansı false ise, bu bir sürükleme değil, tek tıklamadır.
+    if (isDraggingRef.current === false) {
       handleDaySelection(dayNumber)
     }
-    isDraggingRef.current = false
+
+    // Sürükleme durumunu sıfırla
     setDragStartDay(null)
+    isDraggingRef.current = false
+  }
+  
+  const handleMouseLeaveContainer = () => {
+    // Eğer fare takvim alanından çıkarsa sürüklemeyi iptal et
+    setDragStartDay(null)
+    isDraggingRef.current = false
   }
 
-  const cancelDrag = () => {
-    isDraggingRef.current = false
-    setDragStartDay(null)
-  }
 
   // Tercihleri sıfırla
   const resetPreferences = () => {
@@ -348,7 +354,7 @@ function ScheduleCalendar({ currentUserName, preferences, allDoctors, onSave, is
       </div>
 
       {/* Takvim */}
-      <div className={`flex justify-center selection-mode-${selectionMode}`} onMouseLeave={cancelDrag} onMouseUp={cancelDrag}>
+      <div className={`flex justify-center selection-mode-${selectionMode}`} onMouseLeave={handleMouseLeaveContainer}>
         <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4 md:p-6 shadow-lg w-full max-w-lg">
           <DayPicker
             mode="single"
@@ -373,16 +379,9 @@ function ScheduleCalendar({ currentUserName, preferences, allDoctors, onSave, is
                   <button 
                     {...props}
                     className={`rdp-day relative ${isPozitif ? 'calendar-day-positive' : ''} ${isNegatif ? 'calendar-day-negative' : ''}`}
-                    onMouseDown={(e) => {
-                      e.preventDefault()
-                      handleMouseDown(dayNumber)
-                    }}
-                    onMouseEnter={() => handleDragSelect(dayNumber)}
-                    onMouseUp={(e) => {
-                      e.preventDefault()
-                      e.stopPropagation()
-                      handleMouseUp(dayNumber)
-                    }}
+                    onMouseDown={(e) => { e.preventDefault(); handleMouseDown(dayNumber); }}
+                    onMouseEnter={(e) => { e.preventDefault(); handleMouseEnter(dayNumber); }}
+                    onMouseUp={(e) => { e.preventDefault(); handleMouseUp(dayNumber); }}
                     title={`${dayNumber} ${selectedMonth.toLocaleString('tr-TR', { month: 'long' })} - ${totalDoctorCount} doktor bu günü istiyor`}
                     type="button"
                   >
