@@ -3,17 +3,15 @@ import { DayPicker } from 'react-day-picker'
 import { Save, RotateCcw, TrendingUp, Users, Calendar, CheckCircle2, AlertTriangle, Loader2 } from 'lucide-react'
 import 'react-day-picker/dist/style.css'
 
-function ScheduleCalendar({ currentUserName, preferences, allDoctors, onSave, isAdmin }) {
+function ScheduleCalendar({ currentUserName, preferences, allDoctors, onSave, isAdmin, selectedMonth }) {
   const [pozitifGunler, setPozitifGunler] = useState([])
   const [negatifGunler, setNegatifGunler] = useState([])
   const [ozelSebepler, setOzelSebepler] = useState('')
   const [selectionMode, setSelectionMode] = useState('pozitif') // 'pozitif' veya 'negatif'
   const [saving, setSaving] = useState(false)
   const [showSuccess, setShowSuccess] = useState(false)
-  const [dragSelection, setDragSelection] = useState(false)
-
-  // Temmuz 2025
-  const month = new Date(2025, 6) // 6 = Temmuz (0-indexed)
+  const [isDragging, setIsDragging] = useState(false)
+  const [dragStartDay, setDragStartDay] = useState(null)
 
   // Kullanıcı değiştiğinde tercihleri yükle
   useEffect(() => {
@@ -29,30 +27,60 @@ function ScheduleCalendar({ currentUserName, preferences, allDoctors, onSave, is
   }, [currentUserName, preferences])
 
   // Gün tıklama işlemi - Mod bazlı seçim
-  const handleDayClick = (day) => {
-    const dayNumber = day.getDate()
-    
+  const handleDaySelection = (dayNumber) => {
     if (selectionMode === 'pozitif') {
-      // Pozitif mod: Bu günü pozitif listesine ekle/çıkar
       if (pozitifGunler.includes(dayNumber)) {
-        // Zaten seçili, çıkar
         setPozitifGunler(pozitifGunler.filter(d => d !== dayNumber))
       } else {
-        // Seçili değil, ekle (önce negatiften çıkar)
         setNegatifGunler(negatifGunler.filter(d => d !== dayNumber))
         setPozitifGunler([...pozitifGunler, dayNumber])
       }
     } else if (selectionMode === 'negatif') {
-      // Negatif mod: Bu günü negatif listesine ekle/çıkar
       if (negatifGunler.includes(dayNumber)) {
-        // Zaten seçili, çıkar
         setNegatifGunler(negatifGunler.filter(d => d !== dayNumber))
       } else {
-        // Seçili değil, ekle (önce pozitiften çıkar)
         setPozitifGunler(pozitifGunler.filter(d => d !== dayNumber))
         setNegatifGunler([...negatifGunler, dayNumber])
       }
     }
+  }
+
+  // Sürükleme ile seçim
+  const handleDragSelect = (endDay) => {
+    if (!isDragging || dragStartDay === null) return
+
+    const start = Math.min(dragStartDay, endDay)
+    const end = Math.max(dragStartDay, endDay)
+    const newSelectedDays = []
+    for (let i = start; i <= end; i++) {
+      newSelectedDays.push(i)
+    }
+
+    if (selectionMode === 'pozitif') {
+      const otherDays = negatifGunler.filter(d => !newSelectedDays.includes(d))
+      setNegatifGunler(otherDays)
+      const combined = [...new Set([...pozitifGunler, ...newSelectedDays])]
+      setPozitifGunler(combined)
+    } else {
+      const otherDays = pozitifGunler.filter(d => !newSelectedDays.includes(d))
+      setPozitifGunler(otherDays)
+      const combined = [...new Set([...negatifGunler, ...newSelectedDays])]
+      setNegatifGunler(combined)
+    }
+  }
+
+  const handleMouseDown = (dayNumber) => {
+    setIsDragging(true)
+    setDragStartDay(dayNumber)
+  }
+
+  const handleMouseUp = (dayNumber) => {
+    // Eğer sürükleme başlangıcı ile bitişi aynıysa, bunu tek tık olarak kabul et
+    if (isDragging && dragStartDay === dayNumber) {
+      handleDaySelection(dayNumber)
+    }
+    setIsDragging(false)
+    setDragStartDay(null)
   }
 
   // Tercihleri sıfırla
@@ -134,6 +162,22 @@ function ScheduleCalendar({ currentUserName, preferences, allDoctors, onSave, is
       {/* Tailwind CSS ile özel style'lar */}
       <style dangerouslySetInnerHTML={{
         __html: `
+          .dark .rdp {
+            color: #d1d5db; /* gray-300 */
+          }
+          .dark .rdp-day_selected {
+            background-color: #3b82f6 !important; /* blue-500 */
+          }
+          .dark .rdp-day_today {
+            color: #fb923c; /* orange-400 */
+            font-weight: bold;
+          }
+          .dark .rdp-button:hover:not([disabled]):not(.rdp-day_selected) {
+            background-color: #374151; /* gray-700 */
+          }
+          .dark .rdp-head_cell {
+            color: #9ca3af; /* gray-400 */
+          }
           .calendar-day-positive {
             background: linear-gradient(135deg, #10b981 0%, #059669 100%) !important;
             color: white !important;
@@ -222,28 +266,28 @@ function ScheduleCalendar({ currentUserName, preferences, allDoctors, onSave, is
       {/* İstatistikler (Admin için) */}
       {isAdmin && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-          <div className="bg-gradient-to-br from-gray-50 to-slate-100 border border-gray-200 p-4 rounded-lg text-center shadow-sm">
-            <div className="text-2xl font-bold text-blue-600">{stats.totalDoctors}</div>
-            <div className="text-sm text-gray-600">Toplam Doktor</div>
+          <div className="bg-gradient-to-br from-gray-50 to-slate-100 border border-gray-200 p-4 rounded-lg text-center shadow-sm dark:from-gray-800 dark:to-gray-900 dark:border-gray-700">
+            <div className="text-2xl font-bold text-blue-600 dark:text-blue-400">{stats.totalDoctors}</div>
+            <div className="text-sm text-gray-600 dark:text-gray-400">Toplam Doktor</div>
           </div>
-          <div className="bg-gradient-to-br from-gray-50 to-slate-100 border border-gray-200 p-4 rounded-lg text-center shadow-sm">
-            <div className="text-2xl font-bold text-green-600">{stats.completedDoctors}</div>
-            <div className="text-sm text-gray-600">Tercih Girilen</div>
+          <div className="bg-gradient-to-br from-gray-50 to-slate-100 border border-gray-200 p-4 rounded-lg text-center shadow-sm dark:from-gray-800 dark:to-gray-900 dark:border-gray-700">
+            <div className="text-2xl font-bold text-green-600 dark:text-green-400">{stats.completedDoctors}</div>
+            <div className="text-sm text-gray-600 dark:text-gray-400">Tercih Girilen</div>
           </div>
-          <div className="bg-gradient-to-br from-gray-50 to-slate-100 border border-gray-200 p-4 rounded-lg text-center shadow-sm">
-            <div className="text-2xl font-bold text-orange-600">{stats.avgPositive.toFixed(1)}</div>
-            <div className="text-sm text-gray-600">Ort. Pozitif</div>
+          <div className="bg-gradient-to-br from-gray-50 to-slate-100 border border-gray-200 p-4 rounded-lg text-center shadow-sm dark:from-gray-800 dark:to-gray-900 dark:border-gray-700">
+            <div className="text-2xl font-bold text-orange-600 dark:text-orange-400">{stats.avgPositive.toFixed(1)}</div>
+            <div className="text-sm text-gray-600 dark:text-gray-400">Ort. Pozitif</div>
           </div>
-          <div className="bg-gradient-to-br from-gray-50 to-slate-100 border border-gray-200 p-4 rounded-lg text-center shadow-sm">
-            <div className="text-2xl font-bold text-red-600">{stats.avgNegative.toFixed(1)}</div>
-            <div className="text-sm text-gray-600">Ort. Negatif</div>
+          <div className="bg-gradient-to-br from-gray-50 to-slate-100 border border-gray-200 p-4 rounded-lg text-center shadow-sm dark:from-gray-800 dark:to-gray-900 dark:border-gray-700">
+            <div className="text-2xl font-bold text-red-600 dark:text-red-400">{stats.avgNegative.toFixed(1)}</div>
+            <div className="text-sm text-gray-600 dark:text-gray-400">Ort. Negatif</div>
           </div>
         </div>
       )}
 
       {/* Mod Seçimi ve Bilgilendirme */}
-      <div className="bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 border border-blue-200 rounded-xl p-6 shadow-sm">
-        <h4 className="font-bold text-blue-900 mb-4 flex items-center text-lg">
+      <div className="bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 border border-blue-200 rounded-xl p-6 shadow-sm dark:from-blue-900/20 dark:via-indigo-900/20 dark:to-purple-900/20 dark:border-blue-800">
+        <h4 className="font-bold text-blue-900 dark:text-blue-200 mb-4 flex items-center text-lg">
           <Calendar className="h-5 w-5 mr-2" />
           📅 Tercih Seçimi - Adım Adım Rehber
         </h4>
@@ -255,7 +299,7 @@ function ScheduleCalendar({ currentUserName, preferences, allDoctors, onSave, is
             className={`flex items-center justify-center px-6 py-3 rounded-lg font-bold transition-all duration-300 transform ${
               selectionMode === 'pozitif'
                 ? 'bg-gradient-to-r from-green-600 to-green-700 text-white shadow-lg scale-105'
-                : 'bg-white text-green-600 border-2 border-green-600 hover:bg-green-50 hover:scale-102'
+                : 'bg-white text-green-600 border-2 border-green-600 hover:bg-green-50 dark:bg-gray-800 dark:text-green-400 dark:border-green-500 dark:hover:bg-gray-700 hover:scale-102'
             }`}
           >
             <CheckCircle2 className="h-5 w-5 mr-2" />
@@ -266,7 +310,7 @@ function ScheduleCalendar({ currentUserName, preferences, allDoctors, onSave, is
             className={`flex items-center justify-center px-6 py-3 rounded-lg font-bold transition-all duration-300 transform ${
               selectionMode === 'negatif'
                 ? 'bg-gradient-to-r from-red-600 to-red-700 text-white shadow-lg scale-105'
-                : 'bg-white text-red-600 border-2 border-red-600 hover:bg-red-50 hover:scale-102'
+                : 'bg-white text-red-600 border-2 border-red-600 hover:bg-red-50 dark:bg-gray-800 dark:text-red-400 dark:border-red-500 dark:hover:bg-gray-700 hover:scale-102'
             }`}
           >
             <AlertTriangle className="h-5 w-5 mr-2" />
@@ -277,11 +321,11 @@ function ScheduleCalendar({ currentUserName, preferences, allDoctors, onSave, is
         {/* Aktif Mod Bilgilendirmesi */}
         <div className={`p-4 rounded-lg border-2 ${
           selectionMode === 'pozitif' 
-            ? 'bg-gradient-to-r from-green-50 to-emerald-50 border-green-300' 
-            : 'bg-gradient-to-r from-red-50 to-rose-50 border-red-300'
+            ? 'bg-gradient-to-r from-green-50 to-emerald-50 border-green-300 dark:from-green-900/20 dark:to-emerald-900/20 dark:border-green-700' 
+            : 'bg-gradient-to-r from-red-50 to-rose-50 border-red-300 dark:from-red-900/20 dark:to-rose-900/20 dark:border-red-700'
         }`}>
           <p className={`text-sm font-bold ${
-            selectionMode === 'pozitif' ? 'text-green-800' : 'text-red-800'
+            selectionMode === 'pozitif' ? 'text-green-800 dark:text-green-200' : 'text-red-800 dark:text-red-200'
           }`}>
             {selectionMode === 'pozitif' ? (
               <>🟢 Pozitif Seçim Modu: Nöbet tutmak istediğiniz günlere tıklayın</>
@@ -290,7 +334,7 @@ function ScheduleCalendar({ currentUserName, preferences, allDoctors, onSave, is
             )}
           </p>
           <p className={`text-xs mt-1 ${
-            selectionMode === 'pozitif' ? 'text-green-600' : 'text-red-600'
+            selectionMode === 'pozitif' ? 'text-green-600 dark:text-green-300' : 'text-red-600 dark:text-red-300'
           }`}>
             • Günlere tıklayarak seçim yapın • Tekrar tıklayarak seçimi kaldırabilirsiniz
             • Mavi sayılar: O günü isteyen doktor sayısı
@@ -299,15 +343,15 @@ function ScheduleCalendar({ currentUserName, preferences, allDoctors, onSave, is
       </div>
 
       {/* Takvim */}
-      <div className={`flex justify-center selection-mode-${selectionMode}`}>
-        <div className="bg-white rounded-xl border border-gray-200 p-4 md:p-6 shadow-lg w-full max-w-lg">
+      <div className={`flex justify-center selection-mode-${selectionMode}`} onMouseLeave={() => setIsDragging(false)}>
+        <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4 md:p-6 shadow-lg w-full max-w-lg">
           <DayPicker
             mode="single"
-            month={month}
-            onDayClick={handleDayClick}
+            month={selectedMonth}
+            onDayClick={() => {}} // onClick'i devre dışı bırak, mouse event'leri ile yöneteceğiz
             modifiers={{
-              positive: pozitifGunler.map(day => new Date(2025, 6, day)),
-              negative: negatifGunler.map(day => new Date(2025, 6, day))
+              positive: pozitifGunler.map(day => new Date(selectedMonth.getFullYear(), selectedMonth.getMonth(), day)),
+              negative: negatifGunler.map(day => new Date(selectedMonth.getFullYear(), selectedMonth.getMonth(), day))
             }}
             modifiersClassNames={{
               positive: 'calendar-day-positive',
@@ -324,11 +368,16 @@ function ScheduleCalendar({ currentUserName, preferences, allDoctors, onSave, is
                   <button 
                     {...props}
                     className={`rdp-day relative ${isPozitif ? 'calendar-day-positive' : ''} ${isNegatif ? 'calendar-day-negative' : ''}`}
-                    onClick={(e) => {
+                    onMouseDown={(e) => {
                       e.preventDefault()
-                      handleDayClick(date)
+                      handleMouseDown(dayNumber)
                     }}
-                    title={`${dayNumber} Temmuz - ${totalDoctorCount} doktor bu günü istiyor`}
+                    onMouseEnter={() => handleDragSelect(dayNumber)}
+                    onMouseUp={(e) => {
+                      e.preventDefault()
+                      handleMouseUp(dayNumber)
+                    }}
+                    title={`${dayNumber} ${selectedMonth.toLocaleString('tr-TR', { month: 'long' })} - ${totalDoctorCount} doktor bu günü istiyor`}
                     type="button"
                   >
                     <div className="flex flex-col items-center relative w-full h-full">
@@ -369,31 +418,31 @@ function ScheduleCalendar({ currentUserName, preferences, allDoctors, onSave, is
 
       {/* İstatistikler */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-center">
-        <div className={`p-6 rounded-xl shadow-lg ${pozitifGunler.length > 15 ? 'bg-gradient-to-br from-red-50 to-red-100 border border-red-200' : 'bg-gradient-to-br from-green-50 to-emerald-100'}`}>
-          <div className={`text-3xl font-bold mb-2 ${pozitifGunler.length > 15 ? 'text-red-600' : 'text-green-600'}`}>
+        <div className={`p-6 rounded-xl shadow-lg ${pozitifGunler.length > 15 ? 'bg-gradient-to-br from-red-50 to-red-100 border border-red-200 dark:from-red-900/30 dark:to-red-900/40 dark:border-red-800' : 'bg-gradient-to-br from-green-50 to-emerald-100 dark:from-green-900/20 dark:to-emerald-900/30'}`}>
+          <div className={`text-3xl font-bold mb-2 ${pozitifGunler.length > 15 ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'}`}>
             {pozitifGunler.length}
-            <span className="text-lg text-gray-500">/15</span>
+            <span className="text-lg text-gray-500 dark:text-gray-400">/15</span>
           </div>
-          <div className={`text-sm font-medium ${pozitifGunler.length > 15 ? 'text-red-700' : 'text-green-700'}`}>
+          <div className={`text-sm font-medium ${pozitifGunler.length > 15 ? 'text-red-700 dark:text-red-300' : 'text-green-700 dark:text-green-300'}`}>
             İstediğim Günler
-            {pozitifGunler.length > 15 && <div className="text-xs text-red-600 mt-1 animate-pulse">⚠️ Limit aşıldı!</div>}
+            {pozitifGunler.length > 15 && <div className="text-xs text-red-600 dark:text-red-400 mt-1 animate-pulse">⚠️ Limit aşıldı!</div>}
           </div>
         </div>
-        <div className={`p-6 rounded-xl shadow-lg ${negatifGunler.length > 20 ? 'bg-gradient-to-br from-red-50 to-red-100 border border-red-200' : 'bg-gradient-to-br from-red-50 to-rose-100'}`}>
-          <div className={`text-3xl font-bold mb-2 ${negatifGunler.length > 20 ? 'text-red-800' : 'text-red-600'}`}>
+        <div className={`p-6 rounded-xl shadow-lg ${negatifGunler.length > 20 ? 'bg-gradient-to-br from-red-50 to-red-100 border border-red-200 dark:from-red-900/30 dark:to-red-900/40 dark:border-red-800' : 'bg-gradient-to-br from-red-50 to-rose-100 dark:from-red-900/20 dark:to-rose-900/30'}`}>
+          <div className={`text-3xl font-bold mb-2 ${negatifGunler.length > 20 ? 'text-red-800 dark:text-red-400' : 'text-red-600 dark:text-red-400'}`}>
             {negatifGunler.length}
-            <span className="text-lg text-gray-500">/20</span>
+            <span className="text-lg text-gray-500 dark:text-gray-400">/20</span>
           </div>
-          <div className={`text-sm font-medium ${negatifGunler.length > 20 ? 'text-red-800' : 'text-red-700'}`}>
+          <div className={`text-sm font-medium ${negatifGunler.length > 20 ? 'text-red-800 dark:text-red-300' : 'text-red-700 dark:text-red-300'}`}>
             İstemediğim Günler
-            {negatifGunler.length > 20 && <div className="text-xs text-red-600 mt-1 animate-pulse">⚠️ Limit aşıldı!</div>}
+            {negatifGunler.length > 20 && <div className="text-xs text-red-600 dark:text-red-400 mt-1 animate-pulse">⚠️ Limit aşıldı!</div>}
           </div>
         </div>
-        <div className="bg-gradient-to-br from-gray-50 to-slate-100 p-6 rounded-xl shadow-lg">
-          <div className="text-3xl font-bold text-gray-600 mb-2">
-            {31 - pozitifGunler.length - negatifGunler.length}
+        <div className="bg-gradient-to-br from-gray-50 to-slate-100 p-6 rounded-xl shadow-lg dark:from-gray-800 dark:to-gray-900">
+          <div className="text-3xl font-bold text-gray-600 dark:text-gray-300 mb-2">
+            {new Date(selectedMonth.getFullYear(), selectedMonth.getMonth() + 1, 0).getDate() - pozitifGunler.length - negatifGunler.length}
           </div>
-          <div className="text-sm font-medium text-gray-700">Fark Etmeyen</div>
+          <div className="text-sm font-medium text-gray-700 dark:text-gray-400">Fark Etmeyen</div>
         </div>
       </div>
 
@@ -402,10 +451,10 @@ function ScheduleCalendar({ currentUserName, preferences, allDoctors, onSave, is
         const validation = isValidPreferences()
         if (!validation.valid) {
           return (
-            <div className="bg-gradient-to-r from-red-50 to-rose-50 border border-red-200 rounded-lg p-4 animate-pulse">
+            <div className="bg-gradient-to-r from-red-50 to-rose-50 border border-red-200 rounded-lg p-4 animate-pulse dark:from-red-900/20 dark:to-rose-900/20 dark:border-red-800">
               <div className="flex items-center">
-                <AlertTriangle className="h-5 w-5 text-red-600 mr-2" />
-                <p className="text-sm text-red-700 font-bold">
+                <AlertTriangle className="h-5 w-5 text-red-600 dark:text-red-400 mr-2" />
+                <p className="text-sm text-red-700 dark:text-red-300 font-bold">
                   ⚠️ {validation.message}
                 </p>
               </div>
@@ -413,10 +462,10 @@ function ScheduleCalendar({ currentUserName, preferences, allDoctors, onSave, is
           )
         } else if (pozitifGunler.length > 0 || negatifGunler.length > 0) {
           return (
-            <div className="bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200 rounded-lg p-4">
+            <div className="bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200 rounded-lg p-4 dark:from-green-900/20 dark:to-emerald-900/20 dark:border-green-800">
               <div className="flex items-center">
-                <CheckCircle2 className="h-5 w-5 text-green-600 mr-2" />
-                <p className="text-sm text-green-700 font-bold">
+                <CheckCircle2 className="h-5 w-5 text-green-600 dark:text-green-400 mr-2" />
+                <p className="text-sm text-green-700 dark:text-green-300 font-bold">
                   ✅ Tercihleriniz geçerli! Kaydetmek için aşağıdaki butona tıklayın.
                 </p>
               </div>
@@ -427,8 +476,8 @@ function ScheduleCalendar({ currentUserName, preferences, allDoctors, onSave, is
       })()}
 
       {/* Özel Sebepler */}
-      <div className="bg-gradient-to-r from-gray-50 to-slate-50 p-6 rounded-xl border border-gray-200">
-        <label htmlFor="ozel-sebepler" className="block text-sm font-bold text-gray-700 mb-3">
+      <div className="bg-gradient-to-r from-gray-50 to-slate-50 p-6 rounded-xl border border-gray-200 dark:from-gray-800 dark:to-gray-900 dark:border-gray-700">
+        <label htmlFor="ozel-sebepler" className="block text-sm font-bold text-gray-700 dark:text-gray-200 mb-3">
           📝 Özel Sebepler ve Mazeretler (İsteğe Bağlı)
         </label>
         <textarea
@@ -437,23 +486,23 @@ function ScheduleCalendar({ currentUserName, preferences, allDoctors, onSave, is
           onChange={(e) => setOzelSebepler(e.target.value)}
           placeholder="Örn: 15-20 Temmuz arası tatilde olacağım, Cumartesi günleri mümkünse nöbet tutmak istemiyorum..."
           rows={4}
-          className="block w-full px-4 py-3 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 sm:text-sm resize-none transition duration-200"
+          className="block w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 sm:text-sm resize-none transition duration-200 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 placeholder-gray-500 dark:placeholder-gray-400"
         />
-        <p className="text-xs text-gray-500 mt-2">
+        <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
           💡 Özel durumlarınızı, mazeretlerinizi veya tercihlerinizle ilgili ek bilgileri buraya yazabilirsiniz.
         </p>
       </div>
 
       {/* Kullanım Rehberi */}
-      <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-xl p-6">
-        <h4 className="font-bold text-blue-900 mb-4 flex items-center text-lg">
+      <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-xl p-6 dark:from-blue-900/20 dark:to-indigo-900/20 dark:border-blue-800">
+        <h4 className="font-bold text-blue-900 dark:text-blue-200 mb-4 flex items-center text-lg">
           <TrendingUp className="h-5 w-5 mr-2" />
           📖 Kullanım Rehberi
         </h4>
         <div className="grid md:grid-cols-2 gap-6">
           <div>
-            <h5 className="font-bold text-blue-800 mb-3">🎯 Seçim Adımları:</h5>
-            <ul className="text-sm text-blue-700 space-y-2">
+            <h5 className="font-bold text-blue-800 dark:text-blue-300 mb-3">🎯 Seçim Adımları:</h5>
+            <ul className="text-sm text-blue-700 dark:text-blue-400 space-y-2">
               <li className="flex items-start">
                 <span className="mr-2">•</span>
                 <span><strong>1. Adım:</strong> "İstediğim Günler" modunda yeşil butonla seçim yapın</span>
@@ -473,8 +522,8 @@ function ScheduleCalendar({ currentUserName, preferences, allDoctors, onSave, is
             </ul>
           </div>
           <div>
-            <h5 className="font-bold text-blue-800 mb-3">💡 İpuçları:</h5>
-            <ul className="text-sm text-blue-700 space-y-2">
+            <h5 className="font-bold text-blue-800 dark:text-blue-300 mb-3">💡 İpuçları:</h5>
+            <ul className="text-sm text-blue-700 dark:text-blue-400 space-y-2">
               <li className="flex items-start">
                 <span className="mr-2">•</span>
                 <span>Günlerin üzerindeki ✓ ve ✗ işaretlerine dikkat edin</span>
@@ -500,7 +549,7 @@ function ScheduleCalendar({ currentUserName, preferences, allDoctors, onSave, is
       <div className="flex flex-col sm:flex-row justify-between gap-4">
         <button
           onClick={resetPreferences}
-          className="flex items-center justify-center px-6 py-3 border-2 border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 hover:border-gray-400 transition-all duration-200 transform hover:scale-105"
+          className="flex items-center justify-center px-6 py-3 border-2 border-gray-300 dark:border-gray-600 rounded-lg text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 hover:border-gray-400 dark:hover:border-gray-500 transition-all duration-200 transform hover:scale-105"
         >
           <RotateCcw className="h-5 w-5 mr-2" />
           Sıfırla
@@ -512,7 +561,7 @@ function ScheduleCalendar({ currentUserName, preferences, allDoctors, onSave, is
           className={`flex items-center justify-center px-8 py-3 rounded-lg font-bold transition-all duration-300 transform ${
             isValidPreferences().valid && !saving
               ? 'bg-gradient-to-r from-blue-600 to-blue-700 text-white hover:from-blue-700 hover:to-blue-800 shadow-lg hover:shadow-xl hover:scale-105'
-              : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+              : 'bg-gray-300 text-gray-500 dark:bg-gray-600 dark:text-gray-400 cursor-not-allowed'
           }`}
         >
           {saving ? (

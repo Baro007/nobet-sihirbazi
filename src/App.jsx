@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { Calendar, Users, Clock, CheckCircle, Shield, TrendingUp, BarChart3, Loader2, AlertCircle, Download, FileText, Database, Wifi, WifiOff, Trash2, UserX } from 'lucide-react'
+import { Calendar, Users, Clock, CheckCircle, Shield, TrendingUp, BarChart3, Loader2, AlertCircle, Download, FileText, Database, Wifi, WifiOff, Trash2, UserX, ChevronLeft, ChevronRight, Sun, Moon } from 'lucide-react'
 import UserNameInput from './components/UserNameInput'
 import ScheduleCalendar from './components/ScheduleCalendar'
 import SubmitButton from './components/SubmitButton'
@@ -19,6 +19,8 @@ function App() {
   const [systemStats, setSystemStats] = useState({})
   const [isOnline, setIsOnline] = useState(true)
   const [realTimeEnabled, setRealTimeEnabled] = useState(false)
+  const [selectedMonth, setSelectedMonth] = useState(new Date(2025, 7)) // Ağustos 2025
+  const [isDarkMode, setIsDarkMode] = useState(false)
   
   // Admin şifresi
   const ADMIN_PASSWORD = 'admin2025'
@@ -56,6 +58,21 @@ function App() {
       scheduleSubscription?.unsubscribe()
     }
   }, [realTimeEnabled])
+
+  // Dark mode
+  useEffect(() => {
+    const isDark = localStorage.getItem('isDarkMode') === 'true'
+    setIsDarkMode(isDark)
+  }, [])
+
+  useEffect(() => {
+    document.documentElement.classList.toggle('dark', isDarkMode)
+    localStorage.setItem('isDarkMode', isDarkMode)
+  }, [isDarkMode])
+
+  const toggleDarkMode = () => {
+    setIsDarkMode(!isDarkMode)
+  }
 
   // Sistem istatistiklerini hesapla
   useEffect(() => {
@@ -242,7 +259,8 @@ function App() {
       doctors.forEach(d => doctorCounts[d] = 0)
 
       // Gelişmiş çizelge algoritması
-      for (let day = 1; day <= 31; day++) {
+      const daysInMonth = new Date(selectedMonth.getFullYear(), selectedMonth.getMonth() + 1, 0).getDate()
+      for (let day = 1; day <= daysInMonth; day++) {
         const availableDoctors = doctors.filter(doctor => {
           const prefs = preferences[doctor]
           return !prefs.negatif?.includes(day) && doctorCounts[doctor] < 8
@@ -254,7 +272,7 @@ function App() {
           return prefs.pozitif?.includes(day)
         })
 
-        const isWeekend = new Date(2025, 6, day).getDay() % 6 === 0
+        const isWeekend = new Date(selectedMonth.getFullYear(), selectedMonth.getMonth(), day).getDay() % 6 === 0
         const requiredDoctors = isWeekend ? 3 : 2
 
         let selectedDoctors = []
@@ -295,6 +313,15 @@ function App() {
     } finally {
       setLoading(false)
     }
+  }
+
+  // Ay değiştirme fonksiyonları
+  const handlePreviousMonth = () => {
+    setSelectedMonth(prev => new Date(prev.getFullYear(), prev.getMonth() - 1, 1))
+  }
+  
+  const handleNextMonth = () => {
+    setSelectedMonth(prev => new Date(prev.getFullYear(), prev.getMonth() + 1, 1))
   }
 
   // Verileri export et
@@ -489,7 +516,7 @@ function App() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 via-blue-50 to-indigo-50">
+    <div className="min-h-screen bg-gradient-to-br from-gray-50 via-blue-50 to-indigo-50 dark:from-gray-900 dark:via-gray-800 dark:to-blue-900 text-gray-800 dark:text-gray-200">
       {/* Notification System */}
       <div className="fixed top-4 right-4 z-50 space-y-2">
         {notifications.map(notification => (
@@ -512,7 +539,7 @@ function App() {
       </div>
 
       {/* Header */}
-      <header className="bg-white shadow-lg border-b border-gray-200">
+      <header className="bg-white/80 dark:bg-gray-800/80 shadow-lg border-b border-gray-200 dark:border-gray-700 backdrop-blur-sm sticky top-0 z-40">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center py-6">
             <div className="flex items-center">
@@ -523,9 +550,9 @@ function App() {
                 <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
                   NöbetSihirbazı
                 </h1>
-                <p className="text-gray-600 text-sm flex items-center">
+                <p className="text-gray-600 dark:text-gray-400 text-sm flex items-center">
                   <Database className="h-4 w-4 mr-1" />
-                  Supabase Cloud Database - Temmuz 2025
+                  Supabase Cloud Database - {selectedMonth.toLocaleString('tr-TR', { month: 'long', year: 'numeric' })}
                   {isOnline ? (
                     <span className="ml-2 flex items-center text-green-600">
                       <Wifi className="h-3 w-3 mr-1" />
@@ -541,8 +568,15 @@ function App() {
               </div>
             </div>
             
-            {/* Admin Panel */}
+            {/* Admin Panel & Dark Mode Toggle */}
             <div className="flex items-center space-x-4">
+               <button
+                onClick={toggleDarkMode}
+                className="p-2 rounded-full bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-600 transition"
+              >
+                {isDarkMode ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
+              </button>
+
               {!isAdmin ? (
                 <div className="flex items-center space-x-2">
                   <input
@@ -550,7 +584,7 @@ function App() {
                     value={adminPassword}
                     onChange={(e) => setAdminPassword(e.target.value)}
                     placeholder="Admin şifresi"
-                    className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
                     onKeyPress={(e) => e.key === 'Enter' && handleAdminLogin()}
                   />
                   <button
@@ -570,9 +604,9 @@ function App() {
                     <Database className="h-4 w-4 mr-1 inline" />
                     Yenile
                   </button>
-                  <div className="flex items-center bg-green-100 px-3 py-2 rounded-lg">
-                    <Shield className="h-4 w-4 text-green-600 mr-2" />
-                    <span className="text-sm font-bold text-green-800">Admin</span>
+                  <div className="flex items-center bg-green-100 dark:bg-green-900/50 px-3 py-2 rounded-lg">
+                    <Shield className="h-4 w-4 text-green-600 dark:text-green-400 mr-2" />
+                    <span className="text-sm font-bold text-green-800 dark:text-green-300">Admin</span>
                   </div>
                   <button
                     onClick={handleAdminLogout}
@@ -593,8 +627,8 @@ function App() {
                   onClick={() => setActiveTab('preferences')}
                   className={`flex items-center px-3 py-2 text-sm font-medium rounded-lg transition duration-200 ${
                     activeTab === 'preferences'
-                      ? 'bg-blue-100 text-blue-700'
-                      : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100'
+                      ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300'
+                      : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700/50'
                   }`}
                 >
                   <Users className="h-4 w-4 mr-2" />
@@ -604,8 +638,8 @@ function App() {
                   onClick={() => setActiveTab('schedule')}
                   className={`flex items-center px-3 py-2 text-sm font-medium rounded-lg transition duration-200 ${
                     activeTab === 'schedule'
-                      ? 'bg-blue-100 text-blue-700'
-                      : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100'
+                      ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300'
+                      : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700/50'
                   }`}
                 >
                   <Calendar className="h-4 w-4 mr-2" />
@@ -615,8 +649,8 @@ function App() {
                   onClick={() => setActiveTab('admin')}
                   className={`flex items-center px-3 py-2 text-sm font-medium rounded-lg transition duration-200 ${
                     activeTab === 'admin'
-                      ? 'bg-blue-100 text-blue-700'
-                      : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100'
+                      ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300'
+                      : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700/50'
                   }`}
                 >
                   <BarChart3 className="h-4 w-4 mr-2" />
@@ -634,12 +668,12 @@ function App() {
         {activeTab === 'preferences' && (
           <div className="space-y-8">
             {/* Info Banner */}
-            <div className="bg-gradient-to-r from-blue-50 to-cyan-50 border border-blue-200 rounded-xl p-6">
+            <div className="bg-gradient-to-r from-blue-50 to-cyan-50 border border-blue-200 rounded-xl p-6 dark:from-blue-900/20 dark:to-cyan-900/20 dark:border-blue-800">
               <div className="flex items-center">
                 <Database className="h-6 w-6 text-blue-600 mr-3" />
                 <div>
-                  <h3 className="text-lg font-bold text-blue-900">🚀 Supabase Cloud Database Aktif!</h3>
-                  <p className="text-blue-700 text-sm mt-1">
+                  <h3 className="text-lg font-bold text-blue-900 dark:text-blue-200">🚀 Supabase Cloud Database Aktif!</h3>
+                  <p className="text-blue-700 dark:text-blue-300 text-sm mt-1">
                     Tüm veriler bulutta güvenle saklanıyor. Farklı cihazlardan erişebilir, gerçek zamanlı güncellemeleri görebilirsiniz!
                   </p>
                 </div>
@@ -664,12 +698,25 @@ function App() {
               isAdmin={isAdmin}
             />
             
+            <div className="flex justify-center items-center gap-4 my-4">
+              <button onClick={handlePreviousMonth} className="p-2 rounded-full bg-gray-200 hover:bg-gray-300 transition">
+                <ChevronLeft className="h-6 w-6" />
+              </button>
+              <h2 className="text-xl font-bold text-gray-800 dark:text-gray-200">
+                {selectedMonth.toLocaleString('tr-TR', { month: 'long', year: 'numeric' })}
+              </h2>
+              <button onClick={handleNextMonth} className="p-2 rounded-full bg-gray-200 hover:bg-gray-300 transition">
+                <ChevronRight className="h-6 w-6" />
+              </button>
+            </div>
+            
             <ScheduleCalendar 
               currentUserName={currentUserName}
               preferences={preferences}
               allDoctors={allDoctors}
               onSave={savePreferences}
               isAdmin={isAdmin}
+              selectedMonth={selectedMonth}
             />
           </div>
         )}
@@ -678,7 +725,7 @@ function App() {
         {activeTab === 'schedule' && isAdmin && (
           <div className="space-y-8">
             <div className="flex justify-between items-center">
-              <h2 className="text-2xl font-bold text-gray-900">Nöbet Çizelgesi</h2>
+              <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Nöbet Çizelgesi</h2>
               <button
                 onClick={generateSchedule}
                 disabled={loading}
@@ -704,31 +751,31 @@ function App() {
         {/* Admin Panel Tab */}
         {activeTab === 'admin' && isAdmin && (
           <div className="space-y-8">
-            <h2 className="text-2xl font-bold text-gray-900">Supabase Admin Panel</h2>
+            <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Supabase Admin Panel</h2>
             
             {/* İstatistikler */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-              <div className="bg-white p-6 rounded-xl shadow-lg border border-gray-200">
-                <div className="text-3xl font-bold text-blue-600">{systemStats.totalDoctors}</div>
-                <div className="text-sm text-gray-600">Toplam Doktor</div>
+              <div className="bg-white dark:bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-200 dark:border-gray-700">
+                <div className="text-3xl font-bold text-blue-600 dark:text-blue-400">{systemStats.totalDoctors}</div>
+                <div className="text-sm text-gray-600 dark:text-gray-400">Toplam Doktor</div>
               </div>
-              <div className="bg-white p-6 rounded-xl shadow-lg border border-gray-200">
-                <div className="text-3xl font-bold text-green-600">{systemStats.completedDoctors}</div>
-                <div className="text-sm text-gray-600">Tercih Girilen</div>
+              <div className="bg-white dark:bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-200 dark:border-gray-700">
+                <div className="text-3xl font-bold text-green-600 dark:text-green-400">{systemStats.completedDoctors}</div>
+                <div className="text-sm text-gray-600 dark:text-gray-400">Tercih Girilen</div>
               </div>
-              <div className="bg-white p-6 rounded-xl shadow-lg border border-gray-200">
-                <div className="text-3xl font-bold text-orange-600">{systemStats.avgPositive}</div>
-                <div className="text-sm text-gray-600">Ort. Pozitif Tercih</div>
+              <div className="bg-white dark:bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-200 dark:border-gray-700">
+                <div className="text-3xl font-bold text-orange-600 dark:text-orange-400">{systemStats.avgPositive}</div>
+                <div className="text-sm text-gray-600 dark:text-gray-400">Ort. Pozitif Tercih</div>
               </div>
-              <div className="bg-white p-6 rounded-xl shadow-lg border border-gray-200">
-                <div className="text-3xl font-bold text-red-600">{systemStats.avgNegative}</div>
-                <div className="text-sm text-gray-600">Ort. Negatif Tercih</div>
+              <div className="bg-white dark:bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-200 dark:border-gray-700">
+                <div className="text-3xl font-bold text-red-600 dark:text-red-400">{systemStats.avgNegative}</div>
+                <div className="text-sm text-gray-600 dark:text-gray-400">Ort. Negatif Tercih</div>
               </div>
             </div>
 
             {/* Supabase Kontrol Paneli */}
-            <div className="bg-white p-6 rounded-xl shadow-lg border border-gray-200">
-              <h3 className="text-lg font-bold text-gray-900 mb-4">Database İşlemleri</h3>
+            <div className="bg-white dark:bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-200 dark:border-gray-700">
+              <h3 className="text-lg font-bold text-gray-900 dark:text-gray-100 mb-4">Database İşlemleri</h3>
               <div className="flex flex-wrap gap-4">
                 <button
                   onClick={refreshFromSupabase}
@@ -761,8 +808,8 @@ function App() {
             </div>
 
             {/* Export Butonları */}
-            <div className="bg-white p-6 rounded-xl shadow-lg border border-gray-200">
-              <h3 className="text-lg font-bold text-gray-900 mb-4">Veri Export İşlemleri</h3>
+            <div className="bg-white dark:bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-200 dark:border-gray-700">
+              <h3 className="text-lg font-bold text-gray-900 dark:text-gray-100 mb-4">Veri Export İşlemleri</h3>
               <div className="flex flex-wrap gap-4">
                 <button
                   onClick={exportData}
@@ -790,10 +837,10 @@ function App() {
 
             {/* Doktor Listesi */}
             {Object.keys(preferences).length > 0 && (
-              <div className="bg-white p-6 rounded-xl shadow-lg border border-gray-200">
-                <h3 className="text-lg font-bold text-gray-900 mb-4 flex items-center justify-between">
+              <div className="bg-white dark:bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-200 dark:border-gray-700">
+                <h3 className="text-lg font-bold text-gray-900 dark:text-gray-100 mb-4 flex items-center justify-between">
                   <span>Kayıtlı Doktorlar (Supabase'den)</span>
-                  <span className="text-sm font-normal text-gray-500">
+                  <span className="text-sm font-normal text-gray-500 dark:text-gray-400">
                     {Object.keys(preferences).length} doktor
                   </span>
                 </h3>
@@ -802,38 +849,38 @@ function App() {
                     const pref = preferences[doctor]
                     const isTestData = ['Dr. Ahmet Yılmaz', 'Dr. Fatma Demir'].includes(doctor)
                     return (
-                      <div key={doctor} className={`border rounded-lg p-4 ${isTestData ? 'border-orange-200 bg-orange-50' : 'border-gray-200 bg-white'}`}>
+                      <div key={doctor} className={`border rounded-lg p-4 ${isTestData ? 'border-orange-200 bg-orange-50 dark:bg-orange-900/20 dark:border-orange-800' : 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800/50'}`}>
                         <div className="flex justify-between items-start">
                           <div className="flex-1">
                             <div className="flex items-center">
-                              <h4 className="font-bold text-gray-900">{doctor}</h4>
+                              <h4 className="font-bold text-gray-900 dark:text-gray-100">{doctor}</h4>
                               {isTestData && (
-                                <span className="ml-2 px-2 py-1 text-xs bg-orange-200 text-orange-800 rounded-full">
+                                <span className="ml-2 px-2 py-1 text-xs bg-orange-200 text-orange-800 dark:bg-orange-800 dark:text-orange-200 rounded-full">
                                   Test Verisi
                                 </span>
                               )}
                             </div>
-                            <p className="text-sm text-gray-600">
+                            <p className="text-sm text-gray-600 dark:text-gray-400">
                               Pozitif: {(pref.pozitif || []).length} gün, 
                               Negatif: {(pref.negatif || []).length} gün
                             </p>
                             {pref.ozelSebepler && (
-                              <p className="text-sm text-gray-500 mt-1">"{pref.ozelSebepler}"</p>
+                              <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">"{pref.ozelSebepler}"</p>
                             )}
-                            <div className="text-xs text-gray-400 mt-2">
+                            <div className="text-xs text-gray-400 dark:text-gray-500 mt-2">
                               {pref.kayitTarihi && new Date(pref.kayitTarihi).toLocaleString('tr-TR')}
                             </div>
                           </div>
                           <div className="flex flex-col items-end space-y-2">
                             <button
                               onClick={() => setCurrentUserName(doctor)}
-                              className="px-3 py-1 text-xs bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 transition duration-200"
+                              className="px-3 py-1 text-xs bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 dark:bg-blue-900/50 dark:text-blue-300 dark:hover:bg-blue-800/70 transition duration-200"
                             >
                               Görüntüle
                             </button>
                             <button
                               onClick={() => deleteDoctor(doctor)}
-                              className="px-3 py-1 text-xs bg-red-100 text-red-700 rounded-lg hover:bg-red-200 transition duration-200 flex items-center"
+                              className="px-3 py-1 text-xs bg-red-100 text-red-700 rounded-lg hover:bg-red-200 dark:bg-red-900/50 dark:text-red-300 dark:hover:bg-red-800/70 transition duration-200 flex items-center"
                             >
                               <Trash2 className="h-3 w-3 mr-1" />
                               Sil
@@ -847,8 +894,8 @@ function App() {
                 
                 {/* Hızlı İşlemler */}
                 {Object.keys(preferences).length > 0 && (
-                  <div className="mt-6 p-4 bg-gray-50 rounded-lg">
-                    <h4 className="font-bold text-gray-800 mb-3">⚡ Hızlı İşlemler</h4>
+                  <div className="mt-6 p-4 bg-gray-50 dark:bg-gray-800/50 rounded-lg">
+                    <h4 className="font-bold text-gray-800 dark:text-gray-200 mb-3">⚡ Hızlı İşlemler</h4>
                     <div className="flex flex-wrap gap-3">
                       <button
                         onClick={() => {
@@ -861,7 +908,7 @@ function App() {
                             addNotification('info', 'Test verisi bulunamadı')
                           }
                         }}
-                        className="px-4 py-2 text-sm bg-orange-100 text-orange-700 rounded-lg hover:bg-orange-200 transition duration-200 flex items-center"
+                        className="px-4 py-2 text-sm bg-orange-100 text-orange-700 rounded-lg hover:bg-orange-200 dark:bg-orange-900/50 dark:text-orange-300 dark:hover:bg-orange-800/70 transition duration-200 flex items-center"
                       >
                         <UserX className="h-4 w-4 mr-2" />
                         Test Verilerini Temizle
@@ -884,7 +931,7 @@ function App() {
                           URL.revokeObjectURL(url)
                           addNotification('success', 'Doktor listesi export edildi!')
                         }}
-                        className="px-4 py-2 text-sm bg-green-100 text-green-700 rounded-lg hover:bg-green-200 transition duration-200 flex items-center"
+                        className="px-4 py-2 text-sm bg-green-100 text-green-700 rounded-lg hover:bg-green-200 dark:bg-green-900/50 dark:text-green-300 dark:hover:bg-green-800/70 transition duration-200 flex items-center"
                       >
                         <Download className="h-4 w-4 mr-2" />
                         Doktor Listesi Export

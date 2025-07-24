@@ -1,7 +1,22 @@
-import React from 'react'
-import { User, Users, AlertCircle, Crown, Search, CheckCircle2, TrendingUp } from 'lucide-react'
+import React, { useState } from 'react'
+import { User, Users, AlertCircle, Crown, Search, CheckCircle2, TrendingUp, Info, Clock } from 'lucide-react'
+import 'react-day-picker/dist/style.css'
 
 function UserNameInput({ currentUserName, setCurrentUserName, allDoctors, isAdmin }) {
+  const [inputValue, setInputValue] = useState('')
+  const [suggestions, setSuggestions] = useState([])
+
+  const handleInputChange = (e) => {
+    const value = e.target.value
+    setInputValue(value)
+    setSuggestions(allDoctors.filter(doctor => doctor.toLowerCase().includes(value.toLowerCase())))
+  }
+
+  const selectSuggestion = (doctor) => {
+    setInputValue(doctor)
+    setSuggestions([])
+  }
+
   const completedDoctorsCount = allDoctors.filter(doctor => 
     // Burada preferences'a erişemediğimiz için sadece doktor sayısını gösteriyoruz
     true // Placeholder - gerçek implementasyonda preferences kontrolü yapılacak
@@ -106,117 +121,125 @@ function UserNameInput({ currentUserName, setCurrentUserName, allDoctors, isAdmi
       )}
 
       {/* Bilgilendirme Kartı */}
-      <div className={`p-6 rounded-xl border-2 ${isAdmin ? 'bg-gradient-to-r from-green-50 to-emerald-50 border-green-200' : 'bg-gradient-to-r from-blue-50 to-indigo-50 border-blue-200'}`}>
+      <div className={`p-6 rounded-xl border-2 ${isAdmin ? 'bg-gradient-to-r from-green-50 to-emerald-50 border-green-200 dark:from-green-900/20 dark:to-emerald-900/20 dark:border-green-800' : 'bg-gradient-to-r from-blue-50 to-indigo-50 border-blue-200 dark:from-blue-900/20 dark:to-indigo-900/20 dark:border-blue-800'}`}>
         <div className="flex items-start">
-          <AlertCircle className={`h-6 w-6 mt-0.5 mr-3 ${isAdmin ? 'text-green-500' : 'text-blue-500'}`} />
-          <div className="flex-1">
-            <h4 className={`font-bold text-lg mb-2 ${isAdmin ? 'text-green-800' : 'text-blue-800'}`}>
+          <AlertCircle className={`h-6 w-6 mt-0.5 mr-3 ${isAdmin ? 'text-green-500 dark:text-green-400' : 'text-blue-500 dark:text-blue-400'}`} />
+          <div>
+            <h4 className={`font-bold text-lg mb-2 ${isAdmin ? 'text-green-800 dark:text-green-200' : 'text-blue-800 dark:text-blue-200'}`}>
               {isAdmin ? '👑 Admin Paneli' : '💡 Bilgilendirme'}
             </h4>
-            <div className={`text-sm ${isAdmin ? 'text-green-700' : 'text-blue-700'}`}>
+            <div className={`text-sm ${isAdmin ? 'text-green-700 dark:text-green-300' : 'text-blue-700 dark:text-blue-300'}`}>
               {isAdmin ? (
-                <div className="space-y-2">
-                  <p className="flex items-center">
-                    <CheckCircle2 className="h-4 w-4 mr-2" />
-                    Admin olarak tüm doktorların tercihlerini görebilirsiniz
-                  </p>
-                  <p className="flex items-center">
-                    <TrendingUp className="h-4 w-4 mr-2" />
-                    Tercih durumunu takip edip çizelge oluşturabilirsiniz
-                  </p>
-                  <p className="flex items-center">
-                    <Search className="h-4 w-4 mr-2" />
-                    Herhangi bir doktor adı girerek onun tercihlerini görüntüleyebilirsiniz
-                  </p>
-                  <p className="flex items-center">
-                    <Users className="h-4 w-4 mr-2" />
-                    Yeni doktor eklemek için adını yazıp Enter'a basın
-                  </p>
-                </div>
+                <>
+                  Admin olarak giriş yaptınız. Aşağıdaki input alanından istediğiniz doktoru arayabilir veya seçebilirsiniz. 
+                  Seçtiğiniz doktorun tercihlerini görüntüleyebilir ve düzenleyebilirsiniz. 
+                  Unutmayın, yaptığınız değişiklikler doğrudan veritabanına kaydedilecektir!
+                </>
               ) : (
-                <div className="space-y-2">
-                  <p className="flex items-center">
-                    <CheckCircle2 className="h-4 w-4 mr-2" />
-                    Adınızı girdikten sonra takvim görünecektir
-                  </p>
-                  <p className="flex items-center">
-                    <TrendingUp className="h-4 w-4 mr-2" />
-                    Sistem dinamiktir, istediğiniz kadar doktor eklenebilir
-                  </p>
-                  <p className="flex items-center">
-                    <User className="h-4 w-4 mr-2" />
-                    Her doktorun kendi tercihlerini girmesi gerekir
-                  </p>
-                  <p className="flex items-center">
-                    <Search className="h-4 w-4 mr-2" />
-                    Önceden kaydedilmiş isminiz varsa listeden seçebilirsiniz
-                  </p>
-                </div>
+                <>
+                  Nöbet tercihlerinizi girmek için lütfen adınızı ve soyadınızı aşağıdaki kutucuğa yazın. 
+                  Eğer daha önce kayıt yaptıysanız, adınızı listeden seçebilirsiniz. 
+                  Girdiğiniz bilgiler, adil bir nöbet çizelgesi oluşturmak için kullanılacaktır.
+                </>
               )}
             </div>
           </div>
         </div>
       </div>
+      
+      <div className="relative">
+        <div className="flex items-center bg-white dark:bg-gray-800 border-2 border-transparent rounded-xl shadow-lg focus-within:border-blue-500 transition-all duration-300">
+          <User className="h-6 w-6 text-gray-400 dark:text-gray-500 mx-4" />
+          <input
+            type="text"
+            value={inputValue}
+            onChange={handleInputChange}
+            className="w-full h-full py-4 bg-transparent text-lg text-gray-800 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none"
+            placeholder={isAdmin ? "Doktor adı girin veya listeden seçin..." : "Dr. Adınız Soyadınız"}
+            onFocus={() => setSuggestions(allDoctors)}
+          />
+        </div>
 
-      {/* Hızlı Erişim Bilgileri */}
-      {currentUserName && (
-        <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm">
-          <h4 className="font-bold text-gray-800 mb-3 flex items-center">
-            <User className="h-5 w-5 text-indigo-500 mr-2" />
-            🎯 Seçili Doktor
-          </h4>
-          <div className="flex items-center justify-between p-4 bg-gradient-to-r from-indigo-50 to-purple-50 rounded-lg">
-            <div className="flex items-center">
-              <div className="w-12 h-12 bg-gradient-to-r from-indigo-500 to-purple-500 rounded-full flex items-center justify-center mr-4">
-                <span className="text-white font-bold text-lg">
-                  {currentUserName.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
-                </span>
-              </div>
-              <div>
-                <p className="font-bold text-gray-800">{currentUserName}</p>
-                <p className="text-sm text-gray-600">
-                  {isAdmin ? 'Admin tarafından görüntüleniyor' : 'Nöbet tercihlerinizi belirleyin'}
-                </p>
-              </div>
-            </div>
-            <div className="text-right">
-              <div className="text-sm text-gray-500">Durum</div>
-              <div className="flex items-center">
-                <div className="w-2 h-2 bg-green-500 rounded-full mr-2"></div>
-                <span className="text-sm font-medium text-green-600">Aktif</span>
-              </div>
+        {suggestions.length > 0 && (
+          <div className="absolute z-10 w-full mt-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl shadow-2xl max-h-60 overflow-y-auto">
+            <ul className="divide-y divide-gray-100 dark:divide-gray-700">
+              {suggestions.map(doctor => (
+                <li 
+                  key={doctor} 
+                  onClick={() => selectSuggestion(doctor)}
+                  className="px-6 py-3 hover:bg-blue-50 dark:hover:bg-blue-900/50 cursor-pointer transition-colors duration-150 text-gray-700 dark:text-gray-300"
+                >
+                  <div className="flex items-center">
+                    <CheckCircle2 className="h-4 w-4 mr-3 text-green-500" />
+                    <span>{doctor}</span>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+
+      <div className="text-center">
+        {currentUserName ? (
+          <p className="text-lg">
+            Şu anki kullanıcı: <span className="font-bold text-blue-600 dark:text-blue-400">{currentUserName}</span>
+          </p>
+        ) : (
+          <p className="text-lg text-gray-500 dark:text-gray-400">
+            Henüz bir kullanıcı seçilmedi.
+          </p>
+        )}
+      </div>
+      
+      {/* Kullanıcı Rehberi */}
+      <div className="p-6 rounded-xl border-2 bg-gradient-to-r from-blue-50 to-indigo-50 border-blue-200 dark:from-blue-900/20 dark:to-indigo-900/20 dark:border-blue-800">
+        <div className="flex items-start">
+          <Info className="h-6 w-6 mt-0.5 mr-3 text-blue-500 dark:text-blue-400" />
+          <div>
+            <h4 className="font-bold text-lg mb-2 text-blue-800 dark:text-blue-200">
+              {isAdmin ? 'Admin Kullanım Rehberi' : 'Nasıl Kullanılır?'}
+            </h4>
+            <div className="text-sm text-blue-700 dark:text-blue-300 space-y-2">
+              <p>
+                {isAdmin ? 'Görüntülemek veya düzenlemek istediğiniz doktorun adını yazmaya başlayın. Listeden bir doktor seçtiğinizde, takvimde o doktorun mevcut tercihleri gösterilecektir.' : 'Adınızı kutucuğa yazın. Eğer sistemde kayıtlıysanız, adınız listede belirecektir. Adınıza tıklayarak seçiminizi yapın.'}
+              </p>
+              <p>
+                Seçim yaptıktan sonra, aşağıdaki takvim üzerinden nöbet tutmak istediğiniz ve istemediğiniz günleri belirleyebilirsiniz.
+              </p>
             </div>
           </div>
         </div>
-      )}
-
-      {/* Yardım Bilgileri */}
-      {!currentUserName && (
-        <div className="bg-gradient-to-r from-yellow-50 to-amber-50 border border-yellow-200 rounded-xl p-6">
-          <h4 className="font-bold text-yellow-800 mb-3 flex items-center">
-            <AlertCircle className="h-5 w-5 text-yellow-600 mr-2" />
-            💡 Başlamak İçin
-          </h4>
-          <ul className="text-sm text-yellow-700 space-y-2">
-            <li className="flex items-center">
-              <div className="w-2 h-2 bg-yellow-500 rounded-full mr-3"></div>
-              Yukarıdaki alana doktor adınızı yazın
-            </li>
-            <li className="flex items-center">
-              <div className="w-2 h-2 bg-yellow-500 rounded-full mr-3"></div>
-              Sistem otomatik olarak takvimi görüntüleyecektir
-            </li>
-            <li className="flex items-center">
-              <div className="w-2 h-2 bg-yellow-500 rounded-full mr-3"></div>
-              Tercihlerinizi belirleyip kaydedin
-            </li>
-            <li className="flex items-center">
-              <div className="w-2 h-2 bg-yellow-500 rounded-full mr-3"></div>
-              Admin çizelgeyi oluşturacaktır
-            </li>
-          </ul>
+      </div>
+      
+      <div className="p-6 rounded-xl border-2 bg-gradient-to-r from-green-50 to-emerald-50 border-green-200 dark:from-green-900/20 dark:to-emerald-900/20 dark:border-green-800">
+        <div className="flex items-start">
+          <AlertCircle className="h-6 w-6 mt-0.5 mr-3 text-green-500 dark:text-green-400" />
+          <div>
+            <h4 className="font-bold text-lg mb-2 text-green-800 dark:text-green-200">
+              {isAdmin ? '👑 Admin tarafından görüntüleniyor' : 'Nöbet tercihlerinizi belirleyin'}
+            </h4>
+            <div className="text-sm text-green-700 dark:text-green-300">
+              {currentUserName ? `Şu an ${currentUserName} adlı doktorun tercihlerini görüntülüyorsunuz.` : (isAdmin ? 'Lütfen bir doktor seçin.' : 'Lütfen adınızı girin.')}
+            </div>
+          </div>
         </div>
-      )}
+      </div>
+      
+      <div className="p-6 rounded-xl border-2 bg-gradient-to-r from-yellow-50 to-amber-50 border-yellow-200 dark:from-yellow-900/20 dark:to-amber-900/20 dark:border-yellow-800">
+        <div className="flex items-start">
+          <Clock className="h-6 w-6 mt-0.5 mr-3 text-yellow-500 dark:text-yellow-400" />
+          <div>
+            <h4 className="font-bold text-lg mb-2 text-yellow-800 dark:text-yellow-200">
+              Son Teslim Tarihi
+            </h4>
+            <div className="text-sm text-yellow-700 dark:text-yellow-300">
+              Lütfen tercihlerinizi en geç <span className="font-bold">25 Temmuz 2025</span> tarihine kadar tamamlayın. Bu tarihten sonra
+              Admin çizelgeyi oluşturacaktır.
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   )
 }
