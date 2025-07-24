@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { DayPicker } from 'react-day-picker'
 import { Save, RotateCcw, TrendingUp, Users, Calendar, CheckCircle2, AlertTriangle, Loader2 } from 'lucide-react'
 import 'react-day-picker/dist/style.css'
@@ -10,8 +10,8 @@ function ScheduleCalendar({ currentUserName, preferences, allDoctors, onSave, is
   const [selectionMode, setSelectionMode] = useState('pozitif') // 'pozitif' veya 'negatif'
   const [saving, setSaving] = useState(false)
   const [showSuccess, setShowSuccess] = useState(false)
-  const [isDragging, setIsDragging] = useState(false)
   const [dragStartDay, setDragStartDay] = useState(null)
+  const isDraggingRef = useRef(false)
 
   // Kullanıcı değiştiğinde tercihleri yükle
   useEffect(() => {
@@ -47,7 +47,7 @@ function ScheduleCalendar({ currentUserName, preferences, allDoctors, onSave, is
 
   // Sürükleme ile seçim
   const handleDragSelect = (endDay) => {
-    if (!isDragging || dragStartDay === null) return
+    if (!isDraggingRef.current || dragStartDay === null) return
 
     const start = Math.min(dragStartDay, endDay)
     const end = Math.max(dragStartDay, endDay)
@@ -70,16 +70,21 @@ function ScheduleCalendar({ currentUserName, preferences, allDoctors, onSave, is
   }
 
   const handleMouseDown = (dayNumber) => {
-    setIsDragging(true)
+    isDraggingRef.current = true
     setDragStartDay(dayNumber)
   }
 
   const handleMouseUp = (dayNumber) => {
     // Eğer sürükleme başlangıcı ile bitişi aynıysa, bunu tek tık olarak kabul et
-    if (isDragging && dragStartDay === dayNumber) {
+    if (isDraggingRef.current && dragStartDay === dayNumber) {
       handleDaySelection(dayNumber)
     }
-    setIsDragging(false)
+    isDraggingRef.current = false
+    setDragStartDay(null)
+  }
+
+  const cancelDrag = () => {
+    isDraggingRef.current = false
     setDragStartDay(null)
   }
 
@@ -343,7 +348,7 @@ function ScheduleCalendar({ currentUserName, preferences, allDoctors, onSave, is
       </div>
 
       {/* Takvim */}
-      <div className={`flex justify-center selection-mode-${selectionMode}`} onMouseLeave={() => setIsDragging(false)}>
+      <div className={`flex justify-center selection-mode-${selectionMode}`} onMouseLeave={cancelDrag} onMouseUp={cancelDrag}>
         <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4 md:p-6 shadow-lg w-full max-w-lg">
           <DayPicker
             mode="single"
@@ -375,6 +380,7 @@ function ScheduleCalendar({ currentUserName, preferences, allDoctors, onSave, is
                     onMouseEnter={() => handleDragSelect(dayNumber)}
                     onMouseUp={(e) => {
                       e.preventDefault()
+                      e.stopPropagation()
                       handleMouseUp(dayNumber)
                     }}
                     title={`${dayNumber} ${selectedMonth.toLocaleString('tr-TR', { month: 'long' })} - ${totalDoctorCount} doktor bu günü istiyor`}
