@@ -52,9 +52,9 @@ function ScheduleCalendar({ currentUserName, preferences, allDoctors, onSave, is
   }
 
   const handleMouseEnter = (dayNumber) => {
-    if (dragStartDay === null) return // Fare basılı değilse bir şey yapma
+    if (dragStartDay === null || dragStartDay === dayNumber) return // Fare basılı değilse veya aynı gün üzerindeyse bir şey yapma
 
-    // Fare basılıyken başka bir güne girildi, bu bir sürüklemedir.
+    // Fare basılıyken BAŞKA bir güne girildi, bu bir sürüklemedir.
     isDraggingRef.current = true
 
     const start = Math.min(dragStartDay, dayNumber)
