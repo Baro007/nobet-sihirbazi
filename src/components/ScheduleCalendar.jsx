@@ -47,6 +47,7 @@ function ScheduleCalendar({ currentUserName, preferences, allDoctors, onSave, is
 
   // Sürükleme ve tıklama olaylarını yönet
   const handleMouseDown = (dayNumber) => {
+    isDraggingRef.current = false; // Her tıklamada sürükleme durumunu sıfırla
     setDragStartDay(dayNumber)
   }
 
