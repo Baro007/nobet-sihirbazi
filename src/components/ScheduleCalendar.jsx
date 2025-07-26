@@ -110,8 +110,8 @@ function ScheduleCalendar({ currentUserName, preferences, allDoctors, onSave, is
     if (pozitifGunler.length > 15) {
       return { valid: false, message: 'Çok fazla pozitif tercih! Maksimum 15 gün seçebilirsiniz.' }
     }
-    if (negatifGunler.length > 20) {
-      return { valid: false, message: 'Çok fazla negatif tercih! Maksimum 20 gün seçebilirsiniz.' }
+    if (negatifGunler.length > 9) {
+      return { valid: false, message: 'Çok fazla negatif tercih! Maksimum 9 gün seçebilirsiniz.' }
     }
     return { valid: true, message: '' }
   }
@@ -433,14 +433,14 @@ function ScheduleCalendar({ currentUserName, preferences, allDoctors, onSave, is
             {pozitifGunler.length > 15 && <div className="text-xs text-red-600 dark:text-red-400 mt-1 animate-pulse">⚠️ Limit aşıldı!</div>}
           </div>
         </div>
-        <div className={`p-6 rounded-xl shadow-lg ${negatifGunler.length > 20 ? 'bg-gradient-to-br from-red-50 to-red-100 border border-red-200 dark:from-red-900/30 dark:to-red-900/40 dark:border-red-800' : 'bg-gradient-to-br from-red-50 to-rose-100 dark:from-red-900/20 dark:to-rose-900/30'}`}>
-          <div className={`text-3xl font-bold mb-2 ${negatifGunler.length > 20 ? 'text-red-800 dark:text-red-400' : 'text-red-600 dark:text-red-400'}`}>
+        <div className={`p-6 rounded-xl shadow-lg ${negatifGunler.length > 9 ? 'bg-gradient-to-br from-red-50 to-red-100 border border-red-200 dark:from-red-900/30 dark:to-red-900/40 dark:border-red-800' : 'bg-gradient-to-br from-red-50 to-rose-100 dark:from-red-900/20 dark:to-rose-900/30'}`}>
+          <div className={`text-3xl font-bold mb-2 ${negatifGunler.length > 9 ? 'text-red-800 dark:text-red-400' : 'text-red-600 dark:text-red-400'}`}>
             {negatifGunler.length}
-            <span className="text-lg text-gray-500 dark:text-gray-400">/20</span>
+            <span className="text-lg text-gray-500 dark:text-gray-400">/9</span>
           </div>
-          <div className={`text-sm font-medium ${negatifGunler.length > 20 ? 'text-red-800 dark:text-red-300' : 'text-red-700 dark:text-red-300'}`}>
+          <div className={`text-sm font-medium ${negatifGunler.length > 9 ? 'text-red-800 dark:text-red-300' : 'text-red-700 dark:text-red-300'}`}>
             İstemediğim Günler
-            {negatifGunler.length > 20 && <div className="text-xs text-red-600 dark:text-red-400 mt-1 animate-pulse">⚠️ Limit aşıldı!</div>}
+            {negatifGunler.length > 9 && <div className="text-xs text-red-600 dark:text-red-400 mt-1 animate-pulse">⚠️ Limit aşıldı!</div>}
           </div>
         </div>
         <div className="bg-gradient-to-br from-gray-50 to-slate-100 p-6 rounded-xl shadow-lg dark:from-gray-800 dark:to-gray-900">
@@ -543,7 +543,7 @@ function ScheduleCalendar({ currentUserName, preferences, allDoctors, onSave, is
               </li>
               <li className="flex items-start">
                 <span className="mr-2">•</span>
-                <span>Maksimum 15 pozitif, 20 negatif tercih yapabilirsiniz</span>
+                <span>Maksimum 15 pozitif, 9 negatif tercih yapabilirsiniz</span>
               </li>
             </ul>
           </div>
