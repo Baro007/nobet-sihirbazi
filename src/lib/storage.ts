@@ -31,11 +31,43 @@ const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string | und
 
 export const isSupabaseConfigured = Boolean(SUPABASE_URL?.trim() && SUPABASE_ANON_KEY?.trim());
 
+const SUPABASE_FETCH_TIMEOUT_MS = 10_000;
+
+async function fetchWithTimeout(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const upstreamSignal = init?.signal;
+
+  const onUpstreamAbort = () => {
+    controller.abort(upstreamSignal?.reason);
+  };
+
+  if (upstreamSignal) {
+    if (upstreamSignal.aborted) {
+      controller.abort(upstreamSignal.reason);
+    } else {
+      upstreamSignal.addEventListener('abort', onUpstreamAbort, { once: true });
+    }
+  }
+
+  const timer = setTimeout(() => {
+    controller.abort(new Error('Supabase request timeout'));
+  }, SUPABASE_FETCH_TIMEOUT_MS);
+
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+    upstreamSignal?.removeEventListener('abort', onUpstreamAbort);
+  }
+}
+
 let supabaseClient: SupabaseClient | null = null;
 function getSupabase(): SupabaseClient | null {
   if (!isSupabaseConfigured) return null;
   if (!supabaseClient) {
-    supabaseClient = createClient(SUPABASE_URL!, SUPABASE_ANON_KEY!);
+    supabaseClient = createClient(SUPABASE_URL!, SUPABASE_ANON_KEY!, {
+      global: { fetch: fetchWithTimeout },
+    });
   }
   return supabaseClient;
 }
@@ -96,8 +128,26 @@ function loadLocalSnapshot(): StoreSnapshot {
   };
 }
 
+function extractErrorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (typeof err === 'object' && err !== null && 'message' in err) {
+    const rawMsg = (err as { message?: unknown }).message;
+    if (typeof rawMsg === 'string' && rawMsg.trim()) return rawMsg;
+  }
+  return String(err ?? 'Supabase bağlantı hatası');
+}
+
 function formatSupabaseErrorMessage(err: unknown): string {
-  const msg = err instanceof Error ? err.message : String(err ?? 'Supabase bağlantı hatası');
+  const msg = extractErrorMessage(err);
+  const lower = msg.toLowerCase();
+  if (
+    lower.includes('aborterror') ||
+    lower.includes('timeout') ||
+    lower.includes('aborted') ||
+    (err instanceof Error && err.name === 'AbortError')
+  ) {
+    return 'Supabase sunucusuna bağlantı zaman aşımına uğradı (internet/hastane ağı kısıtlı veya proje uyku modunda olabilir) — şimdilik yerel tarayıcı modu aktif.';
+  }
   if (
     msg.includes('does not exist') ||
     msg.includes('Could not find the table') ||
