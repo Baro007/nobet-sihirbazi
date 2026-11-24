@@ -31,7 +31,7 @@ const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string | und
 
 export const isSupabaseConfigured = Boolean(SUPABASE_URL?.trim() && SUPABASE_ANON_KEY?.trim());
 
-const SUPABASE_FETCH_TIMEOUT_MS = 10_000;
+const SUPABASE_FETCH_TIMEOUT_MS = 8_000;
 
 async function fetchWithTimeout(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   const controller = new AbortController();
@@ -50,7 +50,7 @@ async function fetchWithTimeout(input: RequestInfo | URL, init?: RequestInit): P
   }
 
   const timer = setTimeout(() => {
-    controller.abort(new Error('Supabase request timeout'));
+    controller.abort();
   }, SUPABASE_FETCH_TIMEOUT_MS);
 
   try {
@@ -58,6 +58,21 @@ async function fetchWithTimeout(input: RequestInfo | URL, init?: RequestInit): P
   } finally {
     clearTimeout(timer);
     upstreamSignal?.removeEventListener('abort', onUpstreamAbort);
+  }
+}
+
+async function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(message));
+    }, ms);
+  });
+
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
   }
 }
 
@@ -146,7 +161,16 @@ function formatSupabaseErrorMessage(err: unknown): string {
     lower.includes('aborted') ||
     (err instanceof Error && err.name === 'AbortError')
   ) {
-    return 'Supabase sunucusuna bağlantı zaman aşımına uğradı (internet/hastane ağı kısıtlı veya proje uyku modunda olabilir) — şimdilik yerel tarayıcı modu aktif.';
+    return 'Supabase sunucusuna bağlantı zaman aşımına uğradı (internet/hastane ağı veya VPN/proxy kısıtlı ya da proje uyku modunda olabilir) — şimdilik yerel tarayıcı modu aktif.';
+  }
+  if (
+    lower.includes('failed to fetch') ||
+    lower.includes('networkerror') ||
+    lower.includes('load failed') ||
+    lower.includes('err_connection_reset') ||
+    lower.includes('fetch failed')
+  ) {
+    return 'Supabase bulut sunucusuna şu an erişilemiyor (internet/hastane ağı veya VPN/proxy kısıtlı olabilir) — şimdilik yerel tarayıcı modu aktif.';
   }
   if (
     msg.includes('does not exist') ||
@@ -166,51 +190,59 @@ export async function loadInitialStore(): Promise<StoreSnapshot> {
   }
 
   try {
-    const [nursesRes, configsRes, prefsRes, schedsRes] = await Promise.all([
-      client.from('app_nurses').select('*').order('sort_order', { ascending: true }),
-      client.from('app_month_configs').select('*'),
-      client.from('app_nurse_preferences').select('*'),
-      client.from('app_month_schedules').select('*'),
-    ]);
+    const { nurses, configs, preferencesByMonth, schedulesByMonth } = await withTimeout(
+      (async () => {
+        const [nursesRes, configsRes, prefsRes, schedsRes] = await Promise.all([
+          client.from('app_nurses').select('*').order('sort_order', { ascending: true }),
+          client.from('app_month_configs').select('*'),
+          client.from('app_nurse_preferences').select('*'),
+          client.from('app_month_schedules').select('*'),
+        ]);
 
-    if (nursesRes.error) throw nursesRes.error;
-    if (configsRes.error) throw configsRes.error;
-    if (prefsRes.error) throw prefsRes.error;
-    if (schedsRes.error) throw schedsRes.error;
+        if (nursesRes.error) throw nursesRes.error;
+        if (configsRes.error) throw configsRes.error;
+        if (prefsRes.error) throw prefsRes.error;
+        if (schedsRes.error) throw schedsRes.error;
 
-    const nurses: Nurse[] = (nursesRes.data ?? []).map((row) => ({
-      id: row.id,
-      name: row.name,
-      branch: row.branch || 'HEM',
-      role: row.default_role || 'nobetli',
-      passiveReason: row.passive_reason || undefined,
-      sortOrder: row.sort_order ?? 0,
-      active: row.active ?? true,
-      notes: row.notes || '',
-    }));
+        const nurses: Nurse[] = (nursesRes.data ?? []).map((row) => ({
+          id: row.id,
+          name: row.name,
+          branch: row.branch || 'HEM',
+          role: row.default_role || 'nobetli',
+          passiveReason: row.passive_reason || undefined,
+          sortOrder: row.sort_order ?? 0,
+          active: row.active ?? true,
+          notes: row.notes || '',
+        }));
 
-    const configs: Record<string, MonthConfig> = {};
-    for (const row of configsRes.data ?? []) {
-      configs[row.year_month] = row.config_json as MonthConfig;
-    }
+        const configs: Record<string, MonthConfig> = {};
+        for (const row of configsRes.data ?? []) {
+          configs[row.year_month] = row.config_json as MonthConfig;
+        }
 
-    const preferencesByMonth: Record<string, Record<string, NursePreference>> = {};
-    for (const row of prefsRes.data ?? []) {
-      if (!preferencesByMonth[row.year_month]) preferencesByMonth[row.year_month] = {};
-      preferencesByMonth[row.year_month][row.nurse_id] = row.pref_json as NursePreference;
-    }
+        const preferencesByMonth: Record<string, Record<string, NursePreference>> = {};
+        for (const row of prefsRes.data ?? []) {
+          if (!preferencesByMonth[row.year_month]) preferencesByMonth[row.year_month] = {};
+          preferencesByMonth[row.year_month][row.nurse_id] = row.pref_json as NursePreference;
+        }
 
-    const schedulesByMonth: Record<string, MonthSchedule> = {};
-    for (const row of schedsRes.data ?? []) {
-      schedulesByMonth[row.year_month] = row.schedule_json as MonthSchedule;
-    }
+        const schedulesByMonth: Record<string, MonthSchedule> = {};
+        for (const row of schedsRes.data ?? []) {
+          schedulesByMonth[row.year_month] = row.schedule_json as MonthSchedule;
+        }
 
-    // Eğer Supabase tamamen boşsa yalnızca temiz başlangıç ay yapılandırmasını oluştur (demo personel ekleme)
-    if (nurses.length === 0 && Object.keys(configs).length === 0) {
-      const freshConfig = createDefaultMonthConfig(DEFAULT_YEAR_MONTH);
-      configs[DEFAULT_YEAR_MONTH] = freshConfig;
-      await saveMonthConfigToStore(freshConfig);
-    }
+        // Eğer Supabase tamamen boşsa yalnızca temiz başlangıç ay yapılandırmasını oluştur (demo personel ekleme)
+        if (nurses.length === 0 && Object.keys(configs).length === 0) {
+          const freshConfig = createDefaultMonthConfig(DEFAULT_YEAR_MONTH);
+          configs[DEFAULT_YEAR_MONTH] = freshConfig;
+          await saveMonthConfigToStore(freshConfig);
+        }
+
+        return { nurses, configs, preferencesByMonth, schedulesByMonth };
+      })(),
+      SUPABASE_FETCH_TIMEOUT_MS + 1_000,
+      'Supabase request timeout'
+    );
 
     safeWriteJson(LOCAL_KEYS.nurses, nurses);
     safeWriteJson(LOCAL_KEYS.configs, configs);
