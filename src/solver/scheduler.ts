@@ -1,4 +1,5 @@
 import {
+  computeBaseStatutoryHours,
   computeNurseTargetHours,
   getDaysInMonth,
   isHolidayOrWeekend,
@@ -12,6 +13,8 @@ import {
   SolverSummary,
 } from '../types/schedule';
 import {
+  computeExpectedOvertimeTargets,
+  computeInitialEmptyStreak,
   evaluateSchedule,
   getExpectedDailyStaffing,
   isSorumluPresentOnDay,
@@ -244,6 +247,7 @@ export function solveSchedule(
     totalTargetHours += th;
   }
 
+  const baseStatutoryHours = computeBaseStatutoryHours(config.yearMonth, config.holidays);
   let extraMesaiDays: number[] = [];
   if (config.autoTopUpUnderHours && totalRequiredHours < totalTargetHours) {
     const extraNeeded = Math.ceil((totalTargetHours - totalRequiredHours) / 8);
@@ -252,6 +256,18 @@ export function solveSchedule(
       dailyM8[d - 1] += 1;
     }
   }
+
+  const leaveOvertimePolicy = config.leaveOvertimePolicy ?? 'proportional';
+  let effectiveSlotHours = 0;
+  for (let d = 0; d < days; d++) {
+    effectiveSlotHours += dailyN24[d] * 24 + dailyM8[d] * 8;
+  }
+  const expectedOvertime = computeExpectedOvertimeTargets(
+    leaveOvertimePolicy,
+    targetHours,
+    baseStatutoryHours,
+    effectiveSlotHours
+  );
 
   // Tercih ve kısıt matrisleri (flat arrays: i * days + dIdx)
   const lockedLeave = new Uint8Array(N * days);
@@ -263,12 +279,18 @@ export function solveSchedule(
   const posMesai = new Uint8Array(N * days);
   const bridgeThursday = new Uint8Array(N * days);
   const hasSignificantLeave = new Uint8Array(N);
+  const posTotalArr = new Int32Array(N);
+  const posNobetWeight = new Int32Array(N);
+  const posMesaiWeight = new Int32Array(N);
+  const shiftStyleCode = new Int8Array(N);
   const leaveCodes: Record<number, Record<number, ShiftCode>> = {};
   const pinnedExactCode: Record<number, Record<number, ShiftCode>> = {};
 
   // Önceki ay son 3 gün (tail): [d-2, d-1, d0]
   // Encode: 1 = N24/N16, 2 = M8/S8, 0 = boş/izin
+  const maxAllowedEmpty = config.maxConsecutiveEmptyDays ?? 3;
   const tailType = new Int8Array(N * 3);
+  const initialEmptyStreak = new Int32Array(N);
   const carryOverGap = new Int32Array(N);
   const carryOverOvertime = new Int32Array(N);
   const carryRecentWknd = new Int32Array(N);
@@ -342,7 +364,22 @@ export function solveSchedule(
       }
     }
 
+    let validPosNob = 0;
+    let validPosMes = 0;
+    for (let d = 0; d < days; d++) {
+      if (posNobet[i * days + d]) validPosNob++;
+      if (posMesai[i * days + d]) validPosMes++;
+    }
+    const posTotal = validPosNob + validPosMes;
+    posTotalArr[i] = posTotal;
+    const denom = Math.sqrt(Math.max(1, posTotal / 2));
+    posNobetWeight[i] = Math.max(1450, Math.min(2700, Math.round(2650 / denom)));
+    posMesaiWeight[i] = Math.max(1850, Math.min(3100, Math.round(3050 / denom)));
+    shiftStyleCode[i] =
+      pref?.shiftStyle === 'prefer_24' ? 1 : pref?.shiftStyle === 'prefer_8' ? -1 : 0;
+
     const tail = config.prevMonthTail?.[nid] ?? ['', '', ''];
+    initialEmptyStreak[i] = computeInitialEmptyStreak(tail);
     for (let t = 0; t < 3; t++) {
       const c = tail[t];
       tailType[i * 3 + t] = c === 'N24' || c === 'N16' ? CELL_N24 : c === 'M8' || c === 'S8' ? CELL_M8 : CELL_EMPTY;
@@ -379,10 +416,8 @@ export function solveSchedule(
   });
 
   // Hızlı puanlama fonksiyonu (allocation-free)
-  const overtimeArr = new Int32Array(N);
   const wkTotalArr = new Int32Array(N);
   const wkNobetArr = new Int32Array(N);
-  const nobetCntArr = new Int32Array(N);
   const gapCntArr = new Int32Array(N);
   const nurseHasViol = new Uint8Array(N);
 
@@ -397,15 +432,15 @@ export function solveSchedule(
 
   function evaluateGridCost(grid: Int8Array): number {
     let cost = 0;
-    let sumOvertime = 0;
-    let minOt = 1e9;
-    let maxOt = -1e9;
+    let devSqSum = 0;
+    let minDev = 1e9;
+    let maxDev = -1e9;
     let minWkTot = 1e9;
     let maxWkTot = -1e9;
     let minWkNob = 1e9;
     let maxWkNob = -1e9;
-    let minNobCnt = 1e9;
-    let maxNobCnt = -1e9;
+    let minBalNob = 1e9;
+    let maxBalNob = -1e9;
     let minGap = 1e9;
     let maxGap = -1e9;
 
@@ -416,10 +451,14 @@ export function solveSchedule(
 
       let worked = 0;
       let nobetCnt = 0;
+      let mesaiCnt = 0;
       let wkNobet = 0;
       let wkTotal = 0;
       let gapCnt = 0;
       let consecMesai = 0;
+      let emptyRun = initialEmptyStreak[i];
+      let unmetPos = 0;
+      let softViolCnt = 0;
       let viol = 0;
 
       // Ay devri kontrolleri
@@ -435,7 +474,8 @@ export function solveSchedule(
             cost += 120000;
             viol = 1;
           } else if (c1 === CELL_M8) {
-            cost += 3800;
+            cost += 9500;
+            viol = 1;
           }
         }
       }
@@ -444,7 +484,8 @@ export function solveSchedule(
           cost += 120000;
           viol = 1;
         } else if (c0 === CELL_M8) {
-          cost += 3800;
+          cost += 9500;
+          viol = 1;
         }
       }
 
@@ -453,6 +494,7 @@ export function solveSchedule(
         const c = grid[idx];
 
         if (c === CELL_N24) {
+          emptyRun = 0;
           worked += 24;
           nobetCnt++;
           consecMesai = 0;
@@ -464,13 +506,14 @@ export function solveSchedule(
             cost += carryYearBayram[i] * 900;
           }
           if (hardNeg[idx]) {
-            cost += 30000;
+            cost += 35000;
             viol = 1;
           } else if (softNeg[idx]) {
-            cost += 450;
+            cost += 1100;
+            softViolCnt++;
           }
           if (posMesai[idx]) {
-            cost += 22000;
+            cost += 24000;
             viol = 1;
           }
 
@@ -488,7 +531,8 @@ export function solveSchedule(
               cost += 120000;
               viol = 1;
             } else if (c2 === CELL_M8) {
-              cost += 3800;
+              cost += 9500;
+              viol = 1;
             }
           }
           if (
@@ -500,55 +544,88 @@ export function solveSchedule(
             gapCnt++;
           }
         } else if (c === CELL_M8) {
+          emptyRun = 0;
           worked += 8;
+          mesaiCnt++;
           consecMesai++;
-          if (consecMesai > 3) cost += 250;
+          if (consecMesai === 2) {
+            if (!(posMesai[idx] && d > 0 && posMesai[idx - 1])) cost += 320;
+          } else if (consecMesai === 3) {
+            cost += 950;
+          } else if (consecMesai >= 4) {
+            cost += 2200;
+          }
           if (d + 1 < days && grid[idx + 1] === CELL_N24) {
-            cost += 80; // Mesai ertesi hemen nöbet hafif kaçınma
+            cost += posMesai[idx] || posNobet[idx + 1] ? 80 : 450;
           }
           if (isHolOrWknd[d]) wkTotal++;
           if (isBayram[d] && carryYearBayram[i] > 0) {
             cost += carryYearBayram[i] * 900;
           }
           if (hardNeg[idx]) {
-            cost += 30000;
+            cost += 35000;
             viol = 1;
           } else if (softNeg[idx]) {
-            cost += 450;
+            cost += 1100;
+            softViolCnt++;
           }
           if (bridgeThursday[idx]) {
-            cost += 4500; // Köprüleme Perşembesine N24 yerine M8 düşmesin
+            cost += 8000; // Köprüleme Perşembesine N24 yerine M8 düşmesin
           } else if (posNobet[idx]) {
-            cost += 950;
+            cost += posNobetWeight[i];
+            unmetPos++;
           }
         } else {
           consecMesai = 0;
+          if (c === CELL_EMPTY) {
+            emptyRun++;
+            if (maxAllowedEmpty > 0 && emptyRun > maxAllowedEmpty) {
+              cost += 18000;
+              viol = 1;
+            }
+          } else {
+            emptyRun = 0;
+          }
           if (bridgeThursday[idx]) {
-            cost += 4500;
+            cost += 8000;
           } else if (posNobet[idx]) {
-            cost += 950;
+            cost += posNobetWeight[i];
+            unmetPos++;
           }
           if (posMesai[idx]) {
-            cost += 1350;
+            cost += posMesaiWeight[i];
+            unmetPos++;
           }
         }
       }
 
+      if (posTotalArr[i] > 0 && unmetPos > 0) {
+        const r = unmetPos / posTotalArr[i];
+        cost += Math.round(r * r * 3600);
+      }
+      if (softViolCnt > 1) {
+        cost += (softViolCnt - 1) * (softViolCnt - 1) * 400;
+      }
+      if (shiftStyleCode[i] === 1) {
+        cost += mesaiCnt * 750;
+      } else if (shiftStyleCode[i] === -1) {
+        cost += nobetCnt * 850;
+      }
+
       nurseHasViol[i] = viol;
       const ot = worked - targetHours[i];
-      overtimeArr[i] = ot;
       wkTotalArr[i] = wkTotal;
       wkNobetArr[i] = wkNobet;
-      nobetCntArr[i] = nobetCnt;
       gapCntArr[i] = gapCnt;
 
       if (canFillTotalTarget && ot < 0) {
         cost += ((-ot) / 8) * 1800;
       }
 
-      sumOvertime += ot;
-      if (ot < minOt) minOt = ot;
-      if (ot > maxOt) maxOt = ot;
+      const dev = ot - expectedOvertime[i];
+      devSqSum += dev * dev;
+      if (dev < minDev) minDev = dev;
+      if (dev > maxDev) maxDev = dev;
 
       if (wkTotal < minWkTot) minWkTot = wkTotal;
       if (wkTotal > maxWkTot) maxWkTot = wkTotal;
@@ -556,14 +633,16 @@ export function solveSchedule(
       if (wkNobet < minWkNob) minWkNob = wkNobet;
       if (wkNobet > maxWkNob) maxWkNob = wkNobet;
 
-      if (nobetCnt < minNobCnt) minNobCnt = nobetCnt;
-      if (nobetCnt > maxNobCnt) maxNobCnt = nobetCnt;
+      if (!hasSignificantLeave[i] && shiftStyleCode[i] === 0) {
+        if (nobetCnt < minBalNob) minBalNob = nobetCnt;
+        if (nobetCnt > maxBalNob) maxBalNob = nobetCnt;
+      }
 
       if (!hasSignificantLeave[i]) {
         if (gapCnt < minGap) minGap = gapCnt;
         if (gapCnt > maxGap) maxGap = gapCnt;
         if (gapCnt === 0) {
-          cost += 1400; // En az 1 tane 3 günlük boşluk güçlü teşvik
+          cost += 2200; // En az 1 tane 3 günlük boşluk güçlü teşvik
         } else if (gapCnt > 2) {
           cost += (gapCnt - 2) * 140;
         }
@@ -577,33 +656,29 @@ export function solveSchedule(
       }
     }
 
-    const meanOt = sumOvertime / N;
-    let varSum = 0;
-    for (let i = 0; i < N; i++) {
-      const diff = overtimeArr[i] - meanOt;
-      varSum += diff * diff;
+    const devSpread = maxDev - minDev;
+    if (devSpread > 8) {
+      cost += (devSpread - 8) * 1400;
     }
-
-    const hourSpread = maxOt - minOt;
-    if (hourSpread > 8) {
-      cost += (hourSpread - 8) * 950;
+    if (devSpread > 16) {
+      cost += (devSpread - 16) * 4500;
     }
-    if (hourSpread > 16) {
-      cost += (hourSpread - 16) * 3500;
-    }
-    cost += varSum * 18;
+    cost += devSqSum * (leaveOvertimePolicy === 'equal' ? 24 : 36);
 
     const wkNobSpread = maxWkNob - minWkNob;
     const wkTotSpread = maxWkTot - minWkTot;
-    cost += wkNobSpread * wkNobSpread * 850;
-    cost += wkTotSpread * wkTotSpread * 420;
+    cost += wkNobSpread <= 1 ? wkNobSpread * 400 : 1400 + (wkNobSpread - 2) * 8500;
+    cost += wkTotSpread <= 1 ? wkTotSpread * 300 : 1000 + (wkTotSpread - 2) * 12000;
 
-    const nobSpread = maxNobCnt - minNobCnt;
-    cost += nobSpread * nobSpread * 240;
+    if (minBalNob <= maxBalNob) {
+      const balNobSpread = maxBalNob - minBalNob;
+      cost += balNobSpread * balNobSpread * 280;
+      if (balNobSpread > 2) cost += (balNobSpread - 2) * 1200;
+    }
 
     if (minGap <= maxGap) {
       const gapSpread = maxGap - minGap;
-      cost += gapSpread * gapSpread * 350;
+      cost += gapSpread * gapSpread * 220;
     }
 
     for (let p = 0; p < pairRuleIndices.length; p++) {
@@ -614,7 +689,7 @@ export function solveSchedule(
         const aNob = grid[baseA + d] === CELL_N24;
         const bNob = grid[baseB + d] === CELL_N24;
         if (rule.type === 'separate') {
-          if (aNob && bNob) cost += 6500;
+          if (aNob && bNob) cost += 7500;
         } else if (aNob !== bNob) {
           cost += 450;
         }
@@ -694,10 +769,58 @@ export function solveSchedule(
       return true;
     };
 
-    // Gün sırasını restart'a göre hafif çeşitlendir (veya kronolojik)
+    // 1b. Yeşil (N24) tercih edilen günleri önce yerleştir (komşu güne rastgele atama yapıp isteği tıkamasın)
+    const posDayOrder = Array.from({ length: days }, (_, d) => d).filter((d) =>
+      unlockedByDay[d].some((i) => posNobet[i * days + d] && grid[i * days + d] === CELL_EMPTY)
+    );
+    if (restartIdx % 3 === 1) {
+      posDayOrder.reverse();
+    } else if (restartIdx % 3 === 2) {
+      for (let k = posDayOrder.length - 1; k > 0; k--) {
+        const j = Math.floor(rng() * (k + 1));
+        const tmp = posDayOrder[k];
+        posDayOrder[k] = posDayOrder[j];
+        posDayOrder[j] = tmp;
+      }
+    }
+    for (const d of posDayOrder) {
+      while (nobetLeft[d] > 0) {
+        const cands = unlockedByDay[d].filter(
+          (i) => posNobet[i * days + d] && isHardValidN24(i, d)
+        );
+        if (cands.length === 0) break;
+        cands.sort((a, b) => {
+          const wDiff = posNobetWeight[b] - posNobetWeight[a];
+          if (Math.abs(wDiff) > 50) return wDiff;
+          const otA =
+            hoursSoFar[a] -
+            (targetHours[a] + expectedOvertime[a]) +
+            (isHolOrWknd[d] ? wkSoFar[a] * 8 : 0);
+          const otB =
+            hoursSoFar[b] -
+            (targetHours[b] + expectedOvertime[b]) +
+            (isHolOrWknd[d] ? wkSoFar[b] * 8 : 0);
+          return otA - otB + (rng() - 0.5) * (restartIdx === 0 ? 4 : 18);
+        });
+        const chosen = cands[0];
+        grid[chosen * days + d] = CELL_N24;
+        nobetLeft[d]--;
+        hoursSoFar[chosen] += 24;
+        if (isHolOrWknd[d]) wkSoFar[chosen]++;
+      }
+    }
+
+    // Gün sırasını restart'a göre çeşitlendir
     const dayOrder = Array.from({ length: days }, (_, d) => d);
-    if (restartIdx % 2 === 1) {
+    if (restartIdx % 3 === 1) {
       dayOrder.reverse();
+    } else if (restartIdx % 3 === 2) {
+      for (let k = dayOrder.length - 1; k > 0; k--) {
+        const j = Math.floor(rng() * (k + 1));
+        const tmp = dayOrder[k];
+        dayOrder[k] = dayOrder[j];
+        dayOrder[j] = tmp;
+      }
     }
 
     // 2. Kalan N24 slotlarını doldur
@@ -735,8 +858,22 @@ export function solveSchedule(
               : 0;
           if (blocksPmA !== blocksPmB) return blocksPmA - blocksPmB;
 
-          const otA = hoursSoFar[a] - targetHours[a] + (isHolOrWknd[d] ? wkSoFar[a] * 8 : 0);
-          const otB = hoursSoFar[b] - targetHours[b] + (isHolOrWknd[d] ? wkSoFar[b] * 8 : 0);
+          const softA = softNeg[a * days + d];
+          const softB = softNeg[b * days + d];
+          if (softA !== softB) return softA - softB;
+
+          const styleA = -shiftStyleCode[a] * 18;
+          const styleB = -shiftStyleCode[b] * 18;
+          const otA =
+            hoursSoFar[a] -
+            (targetHours[a] + expectedOvertime[a]) +
+            styleA +
+            (isHolOrWknd[d] ? wkSoFar[a] * 8 : 0);
+          const otB =
+            hoursSoFar[b] -
+            (targetHours[b] + expectedOvertime[b]) +
+            styleB +
+            (isHolOrWknd[d] ? wkSoFar[b] * 8 : 0);
           return otA - otB + (rng() - 0.5) * (restartIdx === 0 ? 2 : 14);
         });
 
@@ -777,8 +914,14 @@ export function solveSchedule(
           const pmB = posMesai[b * days + d] ? -1 : 0;
           if (pmA !== pmB) return pmA - pmB;
 
-          const otA = hoursSoFar[a] - targetHours[a];
-          const otB = hoursSoFar[b] - targetHours[b];
+          const softA = softNeg[a * days + d];
+          const softB = softNeg[b * days + d];
+          if (softA !== softB) return softA - softB;
+
+          const otA =
+            hoursSoFar[a] - (targetHours[a] + expectedOvertime[a]) + shiftStyleCode[a] * 16;
+          const otB =
+            hoursSoFar[b] - (targetHours[b] + expectedOvertime[b]) + shiftStyleCode[b] * 16;
           return otA - otB + (rng() - 0.5) * (restartIdx === 0 ? 2 : 10);
         });
 
@@ -793,8 +936,42 @@ export function solveSchedule(
     return grid;
   }
 
-  const restarts = input.restarts ?? 6;
-  const iterationsPerRestart = input.iterationsPerRestart ?? 35000;
+  const posRequests: Array<{ nurse: number; day: number; want: number }> = [];
+  for (let i = 0; i < N; i++) {
+    for (let d = 0; d < days; d++) {
+      const idx = i * days + d;
+      if (lockedLeave[idx] || pinnedCell[idx]) continue;
+      if (posNobet[idx]) posRequests.push({ nurse: i, day: d, want: CELL_N24 });
+      else if (posMesai[idx]) posRequests.push({ nurse: i, day: d, want: CELL_M8 });
+    }
+  }
+
+  const canQuickN24 = (grid: Int8Array, i: number, d: number): boolean => {
+    const base = i * days;
+    if (hardNeg[base + d] || posMesai[base + d]) return false;
+    if (d === 0 && (tailType[i * 3 + 2] === CELL_N24 || tailType[i * 3 + 1] === CELL_N24)) {
+      return false;
+    }
+    if (d === 1 && tailType[i * 3 + 2] === CELL_N24) return false;
+    if (d >= 1 && grid[base + d - 1] === CELL_N24) return false;
+    if (d >= 2 && grid[base + d - 2] === CELL_N24) return false;
+    if (d + 1 < days && (grid[base + d + 1] === CELL_N24 || grid[base + d + 1] === CELL_M8)) {
+      return false;
+    }
+    if (d + 2 < days && grid[base + d + 2] === CELL_N24) return false;
+    return true;
+  };
+
+  const canQuickM8 = (grid: Int8Array, i: number, d: number): boolean => {
+    const base = i * days;
+    if (hardNeg[base + d]) return false;
+    if (d === 0 && tailType[i * 3 + 2] === CELL_N24) return false;
+    if (d >= 1 && grid[base + d - 1] === CELL_N24) return false;
+    return true;
+  };
+
+  const restarts = input.restarts ?? 10;
+  const iterationsPerRestart = input.iterationsPerRestart ?? 42000;
   let globalBestGrid = new Int8Array(N * days);
   let globalBestCost = Infinity;
 
@@ -804,7 +981,7 @@ export function solveSchedule(
     let restartBestGrid = new Int8Array(grid);
     let restartBestCost = currentCost;
 
-    const tStart = 4500;
+    const tStart = 14000;
     const tEnd = 5;
 
     for (let iter = 0; iter < iterationsPerRestart; iter++) {
@@ -822,8 +999,10 @@ export function solveSchedule(
       let prevB1 = 0;
       let prevA2 = 0;
       let prevB2 = 0;
+      const mixDays = [0, 0, 0];
+      let mixLen = 0;
 
-      if (moveRoll < 0.28) {
+      if (moveRoll < 0.18) {
         // Hedefli onarım veya saat dengeleme hamlesi (aynı gün içinde)
         d1 = Math.floor(rng() * days);
         const list = unlockedByDay[d1];
@@ -848,7 +1027,7 @@ export function solveSchedule(
             swapped = true;
           }
         }
-      } else if (moveRoll < 0.72) {
+      } else if (moveRoll < 0.40) {
         // Standart aynı gün takası (saat + gün dağılımı ayarlar)
         d1 = Math.floor(rng() * days);
         const list = unlockedByDay[d1];
@@ -864,38 +1043,191 @@ export function solveSchedule(
             swapped = true;
           }
         }
-      } else {
-        // Çapraz iki gün 2-opt takası (saat toplamlarını koruyarak boşluk & hafta sonu & tercih iyileştirir)
-        d1 = Math.floor(rng() * days);
-        d2 = Math.floor(rng() * days);
-        if (d1 !== d2 && unlockedByDay[d1].length >= 2 && unlockedByDay[d2].length >= 2) {
-          a = Math.floor(rng() * N);
-          b = Math.floor(rng() * N);
-          const idxA1 = a * days + d1;
-          const idxB1 = b * days + d1;
-          const idxA2 = a * days + d2;
-          const idxB2 = b * days + d2;
-          if (
-            a !== b &&
-            !lockedLeave[idxA1] &&
-            !lockedLeave[idxB1] &&
-            !lockedLeave[idxA2] &&
-            !lockedLeave[idxB2] &&
-            !pinnedCell[idxA1] &&
-            !pinnedCell[idxB1] &&
-            !pinnedCell[idxA2] &&
-            !pinnedCell[idxB2]
-          ) {
-            prevA1 = grid[idxA1];
-            prevB1 = grid[idxB1];
-            prevA2 = grid[idxA2];
-            prevB2 = grid[idxB2];
-            if (prevA1 === prevB2 && prevB1 === prevA2 && prevA1 !== prevB1) {
+      } else if (moveRoll < 0.62 && posRequests.length > 0) {
+        // Tercih odaklı 2-opt takas (önce d2±1/d2±2 engelleyen nöbeti çekip +120k bariyerini aşar)
+        const req = posRequests[Math.floor(rng() * posRequests.length)];
+        a = req.nurse;
+        d2 = req.day;
+        const curA2 = grid[a * days + d2];
+        if (curA2 !== req.want) {
+          const list2 = unlockedByDay[d2];
+          const startIdx = Math.floor(rng() * list2.length);
+          let holderB = -1;
+          for (let k = 0; k < list2.length; k++) {
+            const cand = list2[(startIdx + k) % list2.length];
+            if (cand !== a && grid[cand * days + d2] === req.want) {
+              holderB = cand;
+              break;
+            }
+          }
+          if (holderB >= 0) {
+            b = holderB;
+            let chosenD1 = -1;
+            const nearOffsets = [-2, -1, 1, 2];
+            for (let o = 0; o < 4; o++) {
+              const candD1 = d2 + nearOffsets[o];
+              if (
+                candD1 >= 0 &&
+                candD1 < days &&
+                !lockedLeave[a * days + candD1] &&
+                !pinnedCell[a * days + candD1] &&
+                !lockedLeave[b * days + candD1] &&
+                !pinnedCell[b * days + candD1] &&
+                grid[a * days + candD1] === req.want &&
+                grid[b * days + candD1] === curA2
+              ) {
+                chosenD1 = candD1;
+                break;
+              }
+            }
+            if (chosenD1 < 0) {
+              const dStart = Math.floor(rng() * days);
+              for (let k = 0; k < days; k++) {
+                const candD1 = (dStart + k) % days;
+                if (
+                  candD1 !== d2 &&
+                  !lockedLeave[a * days + candD1] &&
+                  !pinnedCell[a * days + candD1] &&
+                  !lockedLeave[b * days + candD1] &&
+                  !pinnedCell[b * days + candD1] &&
+                  grid[a * days + candD1] === req.want &&
+                  grid[b * days + candD1] === curA2
+                ) {
+                  chosenD1 = candD1;
+                  break;
+                }
+              }
+            }
+            if (chosenD1 >= 0) {
+              d1 = chosenD1;
               undoType = 2;
-              grid[idxA1] = prevB1;
-              grid[idxB1] = prevA1;
-              grid[idxA2] = prevB2;
-              grid[idxB2] = prevA2;
+              prevA1 = req.want;
+              prevB1 = curA2;
+              prevA2 = curA2;
+              prevB2 = req.want;
+              grid[a * days + d1] = curA2;
+              grid[b * days + d1] = req.want;
+              grid[a * days + d2] = req.want;
+              grid[b * days + d2] = curA2;
+              swapped = true;
+            }
+          }
+        }
+      } else if (moveRoll < 0.86) {
+        // Hedefli ve geçerli 2-opt çapraz iki gün takası
+        d1 = Math.floor(rng() * days);
+        const list1 = unlockedByDay[d1];
+        if (list1.length >= 2) {
+          let pickedA = -1;
+          if (rng() < 0.5) {
+            for (let tries = 0; tries < 4; tries++) {
+              const cand = list1[Math.floor(rng() * list1.length)];
+              if (nurseHasViol[cand]) {
+                pickedA = cand;
+                break;
+              }
+            }
+          }
+          a = pickedA >= 0 ? pickedA : list1[Math.floor(rng() * list1.length)];
+          const valA1 = grid[a * days + d1];
+          d2 = -1;
+          for (let tries = 0; tries < 6; tries++) {
+            const candD2 = Math.floor(rng() * days);
+            if (
+              candD2 !== d1 &&
+              !lockedLeave[a * days + candD2] &&
+              !pinnedCell[a * days + candD2] &&
+              grid[a * days + candD2] !== valA1
+            ) {
+              d2 = candD2;
+              break;
+            }
+          }
+          if (d2 >= 0) {
+            const valA2 = grid[a * days + d2];
+            const startIdx = Math.floor(rng() * list1.length);
+            for (let k = 0; k < list1.length; k++) {
+              const candB = list1[(startIdx + k) % list1.length];
+              if (
+                candB !== a &&
+                !lockedLeave[candB * days + d2] &&
+                !pinnedCell[candB * days + d2] &&
+                grid[candB * days + d1] === valA2 &&
+                grid[candB * days + d2] === valA1
+              ) {
+                b = candB;
+                undoType = 2;
+                prevA1 = valA1;
+                prevB1 = valA2;
+                prevA2 = valA2;
+                prevB2 = valA1;
+                grid[a * days + d1] = prevB1;
+                grid[b * days + d1] = prevA1;
+                grid[a * days + d2] = prevB2;
+                grid[b * days + d2] = prevA2;
+                swapped = true;
+                break;
+              }
+            }
+          }
+        }
+      } else {
+        // Saat koruyan geçerli 1×N24 ↔ 2..3×M8 vardiya-tipi takası (prefer_24 / prefer_8 destekli)
+        d1 = Math.floor(rng() * days);
+        const list1 = unlockedByDay[d1];
+        if (list1.length >= 2) {
+          let candA = -1;
+          let candB = -1;
+          const preferStyleBias = rng() < 0.55;
+          const off = Math.floor(rng() * list1.length);
+          for (let k = 0; k < list1.length; k++) {
+            const idxN = list1[(off + k) % list1.length];
+            const v = grid[idxN * days + d1];
+            if (v === CELL_EMPTY && canQuickN24(grid, idxN, d1)) {
+              if (
+                candA < 0 ||
+                (preferStyleBias && shiftStyleCode[idxN] === 1 && shiftStyleCode[candA] !== 1)
+              ) {
+                candA = idxN;
+              }
+            } else if (v === CELL_N24) {
+              if (
+                candB < 0 ||
+                (preferStyleBias && shiftStyleCode[idxN] !== 1 && shiftStyleCode[candB] === 1)
+              ) {
+                candB = idxN;
+              }
+            }
+          }
+          if (candA >= 0 && candB >= 0) {
+            a = candA;
+            b = candB;
+            mixLen = 0;
+            const dOff = Math.floor(rng() * days);
+            for (let k = 0; k < days && mixLen < 3; k++) {
+              const dm = (dOff + k) % days;
+              if (
+                dm !== d1 &&
+                !lockedLeave[a * days + dm] &&
+                !pinnedCell[a * days + dm] &&
+                !lockedLeave[b * days + dm] &&
+                !pinnedCell[b * days + dm] &&
+                grid[a * days + dm] === CELL_M8 &&
+                grid[b * days + dm] === CELL_EMPTY &&
+                canQuickM8(grid, b, dm)
+              ) {
+                mixDays[mixLen++] = dm;
+              }
+            }
+            if (mixLen >= 2) {
+              undoType = 3;
+              grid[a * days + d1] = CELL_N24;
+              grid[b * days + d1] = CELL_EMPTY;
+              for (let m = 0; m < mixLen; m++) {
+                const dm = mixDays[m];
+                grid[a * days + dm] = CELL_EMPTY;
+                grid[b * days + dm] = CELL_M8;
+              }
               swapped = true;
             }
           }
@@ -923,6 +1255,14 @@ export function solveSchedule(
           grid[b * days + d1] = prevB1;
           grid[a * days + d2] = prevA2;
           grid[b * days + d2] = prevB2;
+        } else if (undoType === 3) {
+          grid[a * days + d1] = CELL_EMPTY;
+          grid[b * days + d1] = CELL_N24;
+          for (let m = 0; m < mixLen; m++) {
+            const dm = mixDays[m];
+            grid[a * days + dm] = CELL_M8;
+            grid[b * days + dm] = CELL_EMPTY;
+          }
         }
       }
     }
@@ -966,6 +1306,117 @@ export function solveSchedule(
         }
       }
     }
+  }
+
+  // Stage 2: Çapraz gün 2-opt deterministik yerel iyileştirme (saat dengesini bozmadan tercih/yayılım optimize eder)
+  let crossImproved = true;
+  let crossRounds = 0;
+  while (crossImproved && crossRounds < 2) {
+    crossImproved = false;
+    crossRounds++;
+    for (let dA = 0; dA < days; dA++) {
+      const listA = unlockedByDay[dA];
+      for (let dB = dA + 1; dB < days; dB++) {
+        for (let idx1 = 0; idx1 < listA.length; idx1++) {
+          const nA = listA[idx1];
+          if (lockedLeave[nA * days + dB] || pinnedCell[nA * days + dB]) continue;
+          const vA1 = globalBestGrid[nA * days + dA];
+          const vA2 = globalBestGrid[nA * days + dB];
+          if (vA1 === vA2) continue;
+
+          for (let idx2 = idx1 + 1; idx2 < listA.length; idx2++) {
+            const nB = listA[idx2];
+            if (lockedLeave[nB * days + dB] || pinnedCell[nB * days + dB]) continue;
+            const vB1 = globalBestGrid[nB * days + dA];
+            const vB2 = globalBestGrid[nB * days + dB];
+            if (vB1 !== vA2 || vB2 !== vA1) continue;
+
+            globalBestGrid[nA * days + dA] = vB1;
+            globalBestGrid[nB * days + dA] = vA1;
+            globalBestGrid[nA * days + dB] = vB2;
+            globalBestGrid[nB * days + dB] = vA2;
+            const candCost = evaluateGridCost(globalBestGrid);
+            if (candCost < globalBestCost) {
+              globalBestCost = candCost;
+              crossImproved = true;
+              break;
+            } else {
+              globalBestGrid[nA * days + dA] = vA1;
+              globalBestGrid[nB * days + dA] = vB1;
+              globalBestGrid[nA * days + dB] = vA2;
+              globalBestGrid[nB * days + dB] = vB2;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Stage 3: Vardiya tipi tercihi (prefer_24 / prefer_8) için deterministik 1×N24 ↔ 2..3×M8 iyileştirme
+  for (let pass = 0; pass < 2; pass++) {
+    let mixImproved = false;
+    for (let i = 0; i < N; i++) {
+      if (shiftStyleCode[i] === 0) continue;
+      for (let d1 = 0; d1 < days; d1++) {
+        if (lockedLeave[i * days + d1] || pinnedCell[i * days + d1]) continue;
+        const wantGainN24 = shiftStyleCode[i] === 1;
+        if (
+          wantGainN24 &&
+          (globalBestGrid[i * days + d1] !== CELL_EMPTY || !canQuickN24(globalBestGrid, i, d1))
+        ) {
+          continue;
+        }
+        if (!wantGainN24 && globalBestGrid[i * days + d1] !== CELL_N24) continue;
+        for (const other of unlockedByDay[d1]) {
+          if (other === i) continue;
+          const n24Gainer = wantGainN24 ? i : other;
+          const n24Loser = wantGainN24 ? other : i;
+          if (
+            globalBestGrid[n24Gainer * days + d1] !== CELL_EMPTY ||
+            globalBestGrid[n24Loser * days + d1] !== CELL_N24 ||
+            !canQuickN24(globalBestGrid, n24Gainer, d1)
+          ) {
+            continue;
+          }
+          const mDays: number[] = [];
+          for (let dm = 0; dm < days && mDays.length < 3; dm++) {
+            if (
+              dm !== d1 &&
+              !lockedLeave[n24Gainer * days + dm] &&
+              !pinnedCell[n24Gainer * days + dm] &&
+              !lockedLeave[n24Loser * days + dm] &&
+              !pinnedCell[n24Loser * days + dm] &&
+              globalBestGrid[n24Gainer * days + dm] === CELL_M8 &&
+              globalBestGrid[n24Loser * days + dm] === CELL_EMPTY &&
+              canQuickM8(globalBestGrid, n24Loser, dm)
+            ) {
+              mDays.push(dm);
+            }
+          }
+          if (mDays.length < 2) continue;
+          globalBestGrid[n24Gainer * days + d1] = CELL_N24;
+          globalBestGrid[n24Loser * days + d1] = CELL_EMPTY;
+          for (const dm of mDays) {
+            globalBestGrid[n24Gainer * days + dm] = CELL_EMPTY;
+            globalBestGrid[n24Loser * days + dm] = CELL_M8;
+          }
+          const candCost = evaluateGridCost(globalBestGrid);
+          if (candCost < globalBestCost) {
+            globalBestCost = candCost;
+            mixImproved = true;
+            break;
+          } else {
+            globalBestGrid[n24Gainer * days + d1] = CELL_EMPTY;
+            globalBestGrid[n24Loser * days + d1] = CELL_N24;
+            for (const dm of mDays) {
+              globalBestGrid[n24Gainer * days + dm] = CELL_M8;
+              globalBestGrid[n24Loser * days + dm] = CELL_EMPTY;
+            }
+          }
+        }
+      }
+    }
+    if (!mixImproved) break;
   }
 
   // Grid -> Assignments dönüşümü

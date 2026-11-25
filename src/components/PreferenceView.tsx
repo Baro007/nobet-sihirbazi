@@ -32,6 +32,7 @@ import {
   NursePreference,
   NurseRole,
   PassiveReason,
+  ShiftStylePreference,
 } from '../types/schedule';
 
 type BrushMode = 'positive' | 'positiveMesai' | 'negative' | 'softNegative' | 'leave';
@@ -67,6 +68,7 @@ function makeEmptyPreference(yearMonth: string, nurseId: string): NursePreferenc
     softNegativeDays: [],
     leaveDays: {},
     bridgeLeaveRequests: [],
+    shiftStyle: 'balanced',
     notes: '',
     updatedAt: '',
   };
@@ -81,6 +83,7 @@ function normalizePreference(p: NursePreference): NursePreference {
     softNegativeDays: p.softNegativeDays ?? [],
     leaveDays: p.leaveDays ?? {},
     bridgeLeaveRequests: p.bridgeLeaveRequests ?? [],
+    shiftStyle: p.shiftStyle ?? 'balanced',
     notes: p.notes ?? '',
   };
 }
@@ -412,6 +415,7 @@ export const PreferenceView: React.FC<PreferenceViewProps> = ({
           softNegativeDays: draft.softNegativeDays,
           leaveDays: draft.leaveDays,
           bridgeLeaveRequests: draft.bridgeLeaveRequests,
+          shiftStyle: draft.shiftStyle ?? 'balanced',
           notes: finalNotes,
           updatedAt: new Date().toISOString(),
         },
@@ -520,9 +524,39 @@ export const PreferenceView: React.FC<PreferenceViewProps> = ({
           `Toplam ${totalMarkedPrefs} gün tercih işaretlediniz. Her gün için tercih yapmanıza gerek yok; yalnızca gerçekten önemli günleri seçip kalan günleri boş bırakmanız daha adil bir çizelge üretilmesini sağlar.`
         );
       }
+
+      const maxAllowedEmpty = config.maxConsecutiveEmptyDays ?? 3;
+      if (maxAllowedEmpty > 0 && draft.negativeDays.length > maxAllowedEmpty) {
+        const sortedNeg = [...draft.negativeDays].sort((a, b) => a - b);
+        let streakStartNeg = sortedNeg[0];
+        let prevNeg = sortedNeg[0];
+        let streakWarnings = 0;
+
+        const pushNegStreak = (s: number, e: number) => {
+          const len = e - s + 1;
+          if (len > maxAllowedEmpty && streakWarnings < 2) {
+            warns.push(
+              `${s}–${e}. günler arasında ${len} gün üst üste 🔴 Çalışamam seçtiniz. Hastane en fazla ${maxAllowedEmpty} gün üst üste boşluğa izin verdiği için bu aralıkta 🟣 İzin kullanmanız veya bir günü açık bırakmanız gerekir.`
+            );
+            streakWarnings++;
+          }
+        };
+
+        for (let i = 1; i < sortedNeg.length; i++) {
+          if (sortedNeg[i] === prevNeg + 1) {
+            prevNeg = sortedNeg[i];
+          } else {
+            pushNegStreak(streakStartNeg, prevNeg);
+            streakStartNeg = sortedNeg[i];
+            prevNeg = sortedNeg[i];
+          }
+        }
+        pushNegStreak(streakStartNeg, prevNeg);
+      }
     }
     return warns;
   }, [
+    config.maxConsecutiveEmptyDays,
     isFixedDaytimeRole,
     roleInput,
     draft.negativeDays,
@@ -1096,6 +1130,44 @@ export const PreferenceView: React.FC<PreferenceViewProps> = ({
                 <li key={idx}>{w}</li>
               ))}
             </ul>
+          </div>
+        )}
+
+        {/* Genel Vardiya Ağırlığı Tercihi (Yalnızca Nöbetli) */}
+        {roleInput === 'nobetli' && (
+          <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50/70 p-3 dark:border-slate-700 dark:bg-slate-800/50">
+            <div className="mb-1.5 text-xs font-semibold text-slate-700 dark:text-slate-200">
+              Genel Vardiya Ağırlığı Tercihi (İsteğe bağlı)
+            </div>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+              {(
+                [
+                  ['balanced', '⚖️ Dengeli (Önerilen)'],
+                  ['prefer_24', '🌙 24s Nöbet Ağırlıklı'],
+                  ['prefer_8', '☀️ 08–16 Mesai Ağırlıklı'],
+                ] as Array<[ShiftStylePreference, string]>
+              ).map(([styleVal, label]) => {
+                const activeStyle = (draft.shiftStyle ?? 'balanced') === styleVal;
+                return (
+                  <button
+                    key={styleVal}
+                    type="button"
+                    disabled={isLockedForUser}
+                    onClick={() => {
+                      setJustSavedName(null);
+                      setDraft((prev) => ({ ...prev, shiftStyle: styleVal }));
+                    }}
+                    className={`rounded-xl border px-3 py-2 text-xs font-semibold transition ${
+                      activeStyle
+                        ? 'border-indigo-600 bg-indigo-600 text-white shadow-sm'
+                        : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
           </div>
         )}
 

@@ -491,6 +491,8 @@ export function buildOrInheritMonthConfig(
     base.weekendNobetCount = prevConfig.weekendNobetCount;
     base.autoTopUpUnderHours = prevConfig.autoTopUpUnderHours;
     base.compensateSorumluAbsence = prevConfig.compensateSorumluAbsence ?? true;
+    base.maxConsecutiveEmptyDays = prevConfig.maxConsecutiveEmptyDays ?? 3;
+    base.leaveOvertimePolicy = prevConfig.leaveOvertimePolicy ?? 'proportional';
     base.nurseRoleOverrides = { ...prevConfig.nurseRoleOverrides };
     base.pairRules = prevConfig.pairRules ? [...prevConfig.pairRules] : [];
   }

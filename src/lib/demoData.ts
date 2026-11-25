@@ -128,6 +128,8 @@ export function createDefaultMonthConfig(yearMonth: string): MonthConfig {
     weekendNobetCount: 2,
     autoTopUpUnderHours: true,
     compensateSorumluAbsence: true,
+    maxConsecutiveEmptyDays: 3,
+    leaveOvertimePolicy: 'proportional',
     holidays,
     preferencesLocked: false,
     preferenceDeadline: '',

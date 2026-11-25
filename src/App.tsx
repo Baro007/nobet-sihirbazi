@@ -431,6 +431,7 @@ export const App: React.FC = () => {
           softNegativeDays: unionSorted(tgtPref.softNegativeDays, srcPref.softNegativeDays),
           leaveDays: { ...(srcPref.leaveDays ?? {}), ...(tgtPref.leaveDays ?? {}) },
           bridgeLeaveRequests: bridges,
+          shiftStyle: tgtPref.shiftStyle ?? srcPref.shiftStyle ?? 'balanced',
           notes: mergedNotes,
           updatedAt: tgtPref.updatedAt || srcPref.updatedAt,
         };
@@ -851,6 +852,7 @@ export const App: React.FC = () => {
             onTogglePublish={() => void handleTogglePublish()}
             onTogglePinCell={(nid, d) => void handleTogglePinCell(nid, d)}
             onClearPins={() => void handleClearPins()}
+            onUpdateConfig={handleUpdateConfig}
             onNotify={notify}
           />
         )}

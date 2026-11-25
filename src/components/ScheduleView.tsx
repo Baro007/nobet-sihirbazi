@@ -44,6 +44,7 @@ import {
 import { MANUAL_SHIFT_OPTIONS, SHIFT_META } from '../lib/shifts';
 import { exportYHFR31Excel, fillUploadedYHFR31Template } from '../lib/yhfr31Export';
 import { suggestReplacementsForCell } from '../solver/advisor';
+import { analyzeBottlenecks } from '../solver/bottleneckAnalyzer';
 import {
   evaluateSchedule,
   resolveEffectiveNurseRole,
@@ -74,6 +75,7 @@ interface ScheduleViewProps {
   onTogglePublish: () => void;
   onTogglePinCell: (nurseId: string, day: number) => void;
   onClearPins: () => void;
+  onUpdateConfig?: (next: MonthConfig) => Promise<void>;
   onNotify: (type: 'success' | 'error' | 'warning' | 'info', msg: string) => void;
 }
 
@@ -95,6 +97,7 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
   onTogglePublish,
   onTogglePinCell,
   onClearPins,
+  onUpdateConfig,
   onNotify,
 }) => {
   const [manualTool, setManualTool] = useState<ManualTool>('picker');
@@ -102,6 +105,7 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
   const [activeCell, setActiveCell] = useState<{ nurseId: string; day: number } | null>(null);
   const [history, setHistory] = useState<Record<string, Record<number, ShiftCode>>[]>([]);
   const [showIssues, setShowIssues] = useState(true);
+  const [showBottlenecks, setShowBottlenecks] = useState(true);
   const [showPrefOverlay, setShowPrefOverlay] = useState(true);
   const [showTeamPrefsPanel, setShowTeamPrefsPanel] = useState(true);
   const [showAdvisorPanel, setShowAdvisorPanel] = useState(false);
@@ -168,6 +172,19 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
   const evaluation = useMemo(
     () => evaluateSchedule(config, nurses, preferences, assignments),
     [config, nurses, preferences, assignments]
+  );
+
+  const bottlenecks = useMemo(
+    () =>
+      analyzeBottlenecks({
+        config,
+        nurses,
+        preferences,
+        preflight,
+        evaluation,
+        hasSchedule: hasAnyAssignment,
+      }),
+    [config, nurses, preferences, preflight, evaluation, hasAnyAssignment]
   );
 
   const teamPrefSummary = useMemo(() => {
@@ -501,6 +518,113 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
                   <li key={i}>{w}</li>
                 ))}
               </ul>
+            </div>
+          )}
+
+          {/* Sorumluya Özel: Akıllı Tıkanma Analizi & Çözüm Önerileri */}
+          {bottlenecks.length > 0 && (
+            <div className="rounded-2xl border border-indigo-200 bg-white p-4 shadow-sm dark:border-indigo-900/60 dark:bg-slate-900">
+              <button
+                type="button"
+                onClick={() => setShowBottlenecks((v) => !v)}
+                className="flex w-full items-center justify-between gap-2 text-left text-xs font-bold text-slate-900 dark:text-white sm:text-sm"
+              >
+                <span className="flex items-center gap-2">
+                  <Sparkles className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
+                  🧠 Akıllı Tıkanma Analizi &amp; Çözüm Önerileri ({bottlenecks.length} tespit)
+                </span>
+                {showBottlenecks ? (
+                  <ChevronUp className="h-4 w-4 text-slate-400" />
+                ) : (
+                  <ChevronDown className="h-4 w-4 text-slate-400" />
+                )}
+              </button>
+
+              {showBottlenecks && (
+                <div className="mt-3 space-y-2.5 border-t border-slate-100 pt-3 dark:border-slate-800">
+                  {bottlenecks.map((item) => {
+                    const cardStyle =
+                      item.severity === 'critical'
+                        ? 'border-rose-200 bg-rose-50/80 text-rose-950 dark:border-rose-900/60 dark:bg-rose-950/30 dark:text-rose-100'
+                        : item.severity === 'warning'
+                        ? 'border-amber-200 bg-amber-50/80 text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100'
+                        : 'border-indigo-200 bg-indigo-50/70 text-indigo-950 dark:border-indigo-900/60 dark:bg-indigo-950/30 dark:text-indigo-100';
+
+                    return (
+                      <div
+                        key={item.id}
+                        className={`rounded-xl border p-3 text-xs ${cardStyle}`}
+                      >
+                        <div className="font-bold">{item.title}</div>
+                        <p className="mt-0.5 text-[11px] opacity-90">{item.detail}</p>
+                        <p className="mt-1 text-[11px] font-semibold">
+                          💡 Öneri: {item.suggestion}
+                        </p>
+
+                        {(item.whatsappDraft || item.quickAction) && (
+                          <div className="mt-2 flex flex-wrap items-center gap-2">
+                            {item.whatsappDraft && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  void copyToClipboard(
+                                    item.whatsappDraft!,
+                                    'Uzlaşma WhatsApp mesajı panoya kopyalandı!'
+                                  )
+                                }
+                                className="inline-flex items-center gap-1 rounded-lg border border-emerald-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-emerald-800 hover:bg-emerald-50 dark:border-emerald-700 dark:bg-slate-800 dark:text-emerald-300"
+                              >
+                                <Send className="h-3 w-3" /> 💬 Uzlaşma Mesajı Kopyala
+                              </button>
+                            )}
+
+                            {item.quickAction === 'retry_solve' && (
+                              <button
+                                type="button"
+                                disabled={solving || preflight.activeNobetliCount === 0}
+                                onClick={() => onSolve(true)}
+                                className="inline-flex items-center gap-1 rounded-lg border border-indigo-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-indigo-800 hover:bg-indigo-50 disabled:opacity-50 dark:border-indigo-700 dark:bg-slate-800 dark:text-indigo-300"
+                              >
+                                <RefreshCw className="h-3 w-3" /> 🔄 Yeni Alternatif Dene
+                              </button>
+                            )}
+
+                            {item.quickAction === 'enable_topup' && onUpdateConfig && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  void onUpdateConfig({
+                                    ...config,
+                                    autoTopUpUnderHours: true,
+                                  })
+                                }
+                                className="inline-flex items-center gap-1 rounded-lg border border-teal-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-teal-800 hover:bg-teal-50 dark:border-teal-700 dark:bg-slate-800 dark:text-teal-300"
+                              >
+                                ✅ +1 Mesai Dengelemeyi Aç
+                              </button>
+                            )}
+
+                            {item.quickAction === 'relax_empty_cap' && onUpdateConfig && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  void onUpdateConfig({
+                                    ...config,
+                                    maxConsecutiveEmptyDays: 4,
+                                  })
+                                }
+                                className="inline-flex items-center gap-1 rounded-lg border border-amber-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-amber-800 hover:bg-amber-50 dark:border-amber-700 dark:bg-slate-800 dark:text-amber-300"
+                              >
+                                ⚙️ Boşluk Sınırını 4 Gün Yap
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )}
 
@@ -928,20 +1052,34 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
 
               <div className="rounded-xl border border-slate-200 bg-white p-3.5 dark:border-slate-800 dark:bg-slate-900">
                 <div className="text-xs text-slate-500 dark:text-slate-400">Saat Farkı (Max–Min)</div>
-                <div
-                  className={`mt-1 text-xl font-bold ${
-                    evaluation.hourSpread <= 8
-                      ? 'text-emerald-600'
-                      : evaluation.hourSpread <= 16
-                      ? 'text-indigo-600 dark:text-indigo-400'
-                      : 'text-amber-600'
-                  }`}
-                >
-                  {evaluation.hourSpread} saat
-                </div>
-                <div className="text-[11px] text-slate-500 dark:text-slate-400">
-                  Hedef: en fazla 8–16 saat fark
-                </div>
+                {(() => {
+                  const leaveDiscountActive =
+                    (config.leaveOvertimePolicy ?? 'proportional') !== 'equal' &&
+                    evaluation.fullMonthHourSpread !== evaluation.hourSpread;
+                  const colorSpread = leaveDiscountActive
+                    ? evaluation.fullMonthHourSpread
+                    : evaluation.hourSpread;
+                  return (
+                    <>
+                      <div
+                        className={`mt-1 text-xl font-bold ${
+                          colorSpread <= 8
+                            ? 'text-emerald-600'
+                            : colorSpread <= 16
+                            ? 'text-indigo-600 dark:text-indigo-400'
+                            : 'text-amber-600'
+                        }`}
+                      >
+                        {evaluation.hourSpread} saat
+                      </div>
+                      <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                        {leaveDiscountActive
+                          ? `İzin indirimi aktif · Tam ay fark: ${evaluation.fullMonthHourSpread} s`
+                          : 'Hedef: en fazla 8–16 saat fark'}
+                      </div>
+                    </>
+                  );
+                })()}
               </div>
 
               <div className="rounded-xl border border-slate-200 bg-white p-3.5 dark:border-slate-800 dark:bg-slate-900">
@@ -1571,6 +1709,19 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
                         >
                           {m.threeDayGapCount}
                         </span>
+                        {isAdmin &&
+                          m.role === 'nobetli' &&
+                          (config.maxConsecutiveEmptyDays ?? 3) > 0 &&
+                          m.maxEmptyStreak > (config.maxConsecutiveEmptyDays ?? 3) && (
+                            <span
+                              title={`Üst üste ${m.maxEmptyStreak} gün boşluk (üst sınır: ${
+                                config.maxConsecutiveEmptyDays ?? 3
+                              } gün)`}
+                              className="ml-1 rounded-full bg-rose-100 px-1.5 py-0.5 text-[10px] font-bold text-rose-700 dark:bg-rose-950/60 dark:text-rose-300"
+                            >
+                              {m.maxEmptyStreak}g!
+                            </span>
+                          )}
                       </td>
                       {isAdmin && (
                         <td

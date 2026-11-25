@@ -12,6 +12,8 @@ export type ShiftCode =
 export type NurseRole = 'nobetli' | 'sorumlu' | 'gunduz_mesai' | 'pasif_izinli';
 export type PassiveReason = 'DI' | 'R' | 'YI' | 'II' | 'OTHER';
 export type LeaveCode = 'YI' | 'R' | 'II';
+export type ShiftStylePreference = 'balanced' | 'prefer_24' | 'prefer_8';
+export type LeaveOvertimePolicy = 'equal' | 'proportional' | 'minimal';
 
 export interface PairRule {
   id: string;
@@ -51,6 +53,7 @@ export interface NursePreference {
   softNegativeDays: number[];
   leaveDays: Record<number, LeaveCode>;
   bridgeLeaveRequests: BridgeLeaveRequest[];
+  shiftStyle?: ShiftStylePreference;
   notes: string;
   updatedAt: string;
 }
@@ -71,6 +74,8 @@ export interface MonthConfig {
   weekendNobetCount: number;
   autoTopUpUnderHours: boolean;
   compensateSorumluAbsence?: boolean;
+  maxConsecutiveEmptyDays?: number;
+  leaveOvertimePolicy?: LeaveOvertimePolicy;
   holidays: Record<number, HolidayEntry>;
   preferencesLocked: boolean;
   preferenceDeadline?: string;
@@ -111,6 +116,7 @@ export interface ValidationIssue {
     | 'LEAVE_CONFLICT'
     | 'NEGATIVE_PREF_CONFLICT'
     | 'MESAI_PREF_NOBET_CONFLICT'
+    | 'LONG_EMPTY_STREAK'
     | 'PAIR_SEPARATE_CONFLICT';
   nurseId?: string;
   day?: number;
@@ -130,6 +136,7 @@ export interface NurseMetrics {
   weekendHolidayNobet: number;
   weekendHolidayMesai: number;
   threeDayGapCount: number;
+  maxEmptyStreak: number;
   positiveMatched: number;
   positiveTotal: number;
   positiveNobetMatched: number;
@@ -153,6 +160,7 @@ export interface ScheduleEvaluation {
   softWarnings: number;
   nurseMetrics: NurseMetrics[];
   hourSpread: number;
+  fullMonthHourSpread: number;
   preferenceSatisfactionPct: number;
   totalNegativeViolations: number;
   totalNegativeRequested: number;
@@ -195,4 +203,22 @@ export interface PrevMonthFairnessCarryOver {
   overtimeHours: Record<string, number>;
   recentWeekendShifts?: Record<string, number>;
   yearBayramShifts?: Record<string, number>;
+}
+
+export interface BottleneckItem {
+  id: string;
+  severity: 'critical' | 'warning' | 'tip';
+  category:
+    | 'capacity'
+    | 'competition'
+    | 'self_conflict'
+    | 'empty_streak'
+    | 'leave_overlap'
+    | 'fairness';
+  title: string;
+  detail: string;
+  suggestion: string;
+  day?: number;
+  whatsappDraft?: string;
+  quickAction?: 'retry_solve' | 'enable_topup' | 'relax_empty_cap';
 }

@@ -28,6 +28,7 @@ import {
 import { resolveEffectiveNurseRole } from '../solver/validator';
 import {
   HolidayEntry,
+  LeaveOvertimePolicy,
   MonthConfig,
   Nurse,
   NursePreference,
@@ -906,6 +907,69 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
               Tercih girişini kilitle
             </label>
           </div>
+        </div>
+
+        {/* Üst Üste Boş Gün Üst Sınırı */}
+        <div className="mt-4 flex flex-wrap items-center gap-2.5 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-800/70">
+          <label
+            htmlFor="max-consecutive-empty-select"
+            className="font-semibold text-slate-700 dark:text-slate-200"
+          >
+            Üst Üste En Fazla Boş Gün:
+          </label>
+          <select
+            id="max-consecutive-empty-select"
+            value={config.maxConsecutiveEmptyDays ?? 3}
+            onChange={(e) =>
+              void onUpdateConfig({
+                ...config,
+                maxConsecutiveEmptyDays: Number(e.target.value),
+              })
+            }
+            className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium dark:border-slate-600 dark:bg-slate-900"
+          >
+            <option value={3}>En fazla 3 gün (Hastane Kuralı)</option>
+            <option value={2}>En fazla 2 gün</option>
+            <option value={4}>En fazla 4 gün</option>
+            <option value={0}>Sınır Yok</option>
+          </select>
+          <span className="text-[11px] text-slate-500 dark:text-slate-400">
+            Resmî izin (Yİ/R/İİ) günleri hariç, nöbetli personelde bu süreden uzun boşluk engellenir.
+          </span>
+        </div>
+
+        {/* İzinli Personel Fazla Mesai Dengesi */}
+        <div className="mt-3 flex flex-wrap items-center gap-2.5 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-800/70">
+          <label
+            htmlFor="leave-overtime-policy-select"
+            className="font-semibold text-slate-700 dark:text-slate-200"
+          >
+            İzinli Personel Fazla Mesai Dengesi:
+          </label>
+          <select
+            id="leave-overtime-policy-select"
+            value={config.leaveOvertimePolicy ?? 'proportional'}
+            onChange={(e) =>
+              void onUpdateConfig({
+                ...config,
+                leaveOvertimePolicy: e.target.value as LeaveOvertimePolicy,
+              })
+            }
+            className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium dark:border-slate-600 dark:bg-slate-900"
+          >
+            <option value="proportional">
+              Orantılı İndirim (Önerilen — İzinli daha az fazla mesai alır)
+            </option>
+            <option value="minimal">
+              Güçlü İndirim (İzinliye minimum fazla mesai: 0–8 saat)
+            </option>
+            <option value="equal">
+              Eşit Dağıt (İzinli de herkesle aynı fazla mesaiyi alır)
+            </option>
+          </select>
+          <span className="text-[11px] text-slate-500 dark:text-slate-400">
+            Fazla mesaili aylarda Yİ/R/İİ alanların payını azaltır; günlük kadro sabit olduğundan kalan saat tam ay çalışanlara dengeli dağıtılır.
+          </span>
         </div>
 
         {/* Birlikte / Ayrı Nöbet Çifti Kuralları */}

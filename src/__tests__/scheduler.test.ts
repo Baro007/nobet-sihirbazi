@@ -28,6 +28,9 @@ describe('nurse schedule constraint solver', () => {
     expect(result.summary.durationMs).toBeLessThan(3000);
     expect(ev.hardViolations).toBe(0);
     expect(ev.hourSpread).toBeLessThanOrEqual(16);
+    for (const m of ev.nurseMetrics.filter((x) => x.role === 'nobetli')) {
+      expect(m.maxEmptyStreak).toBeLessThanOrEqual(3);
+    }
 
     // Hafta içi 5 kişi (2 N24 + 2 M8 + 1 S8), hafta sonu 3 kişi (2 N24 + 1 M8)
     for (let d = 1; d <= 31; d++) {
@@ -137,6 +140,9 @@ describe('nurse schedule constraint solver', () => {
     expect(result.summary.durationMs).toBeLessThan(3000);
     expect(ev.hardViolations).toBe(0);
     expect(ev.hourSpread).toBeLessThanOrEqual(16);
+    for (const m of ev.nurseMetrics.filter((x) => x.role === 'nobetli')) {
+      expect(m.maxEmptyStreak).toBeLessThanOrEqual(3);
+    }
     expect(result.summary.extraMesaiDays.length).toBeGreaterThan(0);
 
     const activeNobetli = ev.nurseMetrics.filter((m) => m.role === 'nobetli');
@@ -287,6 +293,9 @@ describe('nurse schedule constraint solver', () => {
     const ev = evaluateSchedule(config, nurses, prefs, result.assignments);
     expect(ev.hardViolations).toBe(0);
     expect(ev.issues.filter((i) => i.code === 'PAIR_SEPARATE_CONFLICT')).toHaveLength(0);
+    for (const m of ev.nurseMetrics.filter((x) => x.role === 'nobetli')) {
+      expect(m.maxEmptyStreak).toBeLessThanOrEqual(3);
+    }
 
     // Gündüzcü personel (n-10): hafta içi M8, hafta sonu boş, N24 sıfır
     expect(result.assignments['n-10'][1]).toBe('M8');
@@ -295,5 +304,129 @@ describe('nurse schedule constraint solver', () => {
       expect(result.assignments['n-10'][d]).not.toBe('N24');
       expect(ev.dailyCounts[d].daytimeTotal).toBe(ev.dailyCounts[d].isWeekendOrHoliday ? 3 : 5);
     }
+  });
+
+  it('prevents 4+ consecutive empty days across an 8-nobetli ward including month-rollover empty tail', () => {
+    const config = createDefaultMonthConfig('2026-12');
+    const nurses = createDemoNurses().slice(0, 9); // Selma (S) + 8 nöbetli (n-01..n-08)
+    config.prevMonthTail = {
+      'n-01': ['N24', '', ''], // Ayın 1'i ve 2'si ikisi birden boş kalırsa 4 gün boşluk olur
+    };
+
+    const result = solveSchedule({
+      config,
+      nurses,
+      preferences: {},
+      seed: 20261208,
+    });
+
+    const ev = evaluateSchedule(config, nurses, {}, result.assignments);
+    expect(ev.issues.filter((i) => i.code === 'LONG_EMPTY_STREAK')).toHaveLength(0);
+    expect(ev.hardViolations).toBe(0);
+    for (const m of ev.nurseMetrics.filter((x) => x.role === 'nobetli')) {
+      expect(m.maxEmptyStreak).toBeLessThanOrEqual(3);
+    }
+  });
+
+  it('honors shiftStyle prefer_24 and delivers proportional fairness + tight weekendSpread <= 2 under congested requests', () => {
+    const config = createDemoMonthConfig('2026-12');
+    const nurses = createDemoNurses();
+    const basePrefs = createDemoPreferences('2026-12');
+    const prefs = {
+      ...basePrefs,
+      'n-04': {
+        ...basePrefs['n-04'],
+        yearMonth: '2026-12',
+        nurseId: 'n-04',
+        positiveNobetDays: [],
+        negativeDays: [4, 9, 18, 26],
+        softNegativeDays: [],
+        leaveDays: {},
+        bridgeLeaveRequests: [],
+        shiftStyle: 'prefer_24' as const,
+        notes: '',
+        updatedAt: '2026-12-01',
+      },
+      'n-01': {
+        ...basePrefs['n-01'],
+        positiveNobetDays: [4, 8, 12, 16, 20, 24, 28],
+      },
+    };
+
+    const result = solveSchedule({
+      config,
+      nurses,
+      preferences: prefs,
+      seed: 20261225,
+    });
+
+    const ev = evaluateSchedule(config, nurses, prefs, result.assignments);
+    expect(result.summary.durationMs).toBeLessThan(3000);
+    expect(ev.hardViolations).toBe(0);
+    expect(ev.weekendSpread).toBeLessThanOrEqual(2);
+    expect(ev.hourSpread).toBeLessThanOrEqual(16);
+
+    const m04 = ev.nurseMetrics.find((m) => m.nurseId === 'n-04')!;
+    const peers = ev.nurseMetrics.filter(
+      (m) => m.role === 'nobetli' && m.nurseId !== 'n-04' && m.nurseId !== 'n-03'
+    );
+    const peerAvgMesai = peers.reduce((s, m) => s + m.mesaiCount, 0) / peers.length;
+    expect(m04.mesaiCount).toBeLessThanOrEqual(Math.ceil(peerAvgMesai));
+    expect(m04.nobetCount).toBeGreaterThanOrEqual(6);
+  });
+
+  it('reduces overtime for nurses taking annual leave under proportional and minimal leaveOvertimePolicy', () => {
+    const nurses = createDemoNurses();
+    const prefs = createDemoPreferences('2026-12'); // n-03: 5 gün Yİ (144s hedef)
+
+    const propConfig = {
+      ...createDemoMonthConfig('2026-12'),
+      leaveOvertimePolicy: 'proportional' as const,
+    };
+    const propResult = solveSchedule({
+      config: propConfig,
+      nurses,
+      preferences: prefs,
+      seed: 202612,
+    });
+    const evProp = evaluateSchedule(propConfig, nurses, prefs, propResult.assignments);
+    expect(evProp.hardViolations).toBe(0);
+    expect(evProp.fullMonthHourSpread).toBeLessThanOrEqual(8);
+    for (const m of evProp.nurseMetrics.filter((x) => x.role === 'nobetli')) {
+      expect(m.maxEmptyStreak).toBeLessThanOrEqual(3);
+    }
+    const m03Prop = evProp.nurseMetrics.find((m) => m.nurseId === 'n-03')!;
+    const fullPeersProp = evProp.nurseMetrics.filter(
+      (m) => m.role === 'nobetli' && m.nurseId !== 'n-03'
+    );
+    const fullMeanProp =
+      fullPeersProp.reduce((s, m) => s + m.overtimeHours, 0) / fullPeersProp.length;
+    expect(m03Prop.overtimeHours).toBeLessThanOrEqual(8);
+    expect(m03Prop.overtimeHours).toBeLessThan(fullMeanProp);
+
+    const minConfig = {
+      ...createDemoMonthConfig('2026-12'),
+      leaveOvertimePolicy: 'minimal' as const,
+    };
+    const minResult = solveSchedule({
+      config: minConfig,
+      nurses,
+      preferences: prefs,
+      seed: 202612,
+    });
+    const evMin = evaluateSchedule(minConfig, nurses, prefs, minResult.assignments);
+    expect(evMin.hardViolations).toBe(0);
+    expect(evMin.fullMonthHourSpread).toBeLessThanOrEqual(8);
+    for (const m of evMin.nurseMetrics.filter((x) => x.role === 'nobetli')) {
+      expect(m.maxEmptyStreak).toBeLessThanOrEqual(3);
+    }
+    const m03Min = evMin.nurseMetrics.find((m) => m.nurseId === 'n-03')!;
+    const fullPeersMin = evMin.nurseMetrics.filter(
+      (m) => m.role === 'nobetli' && m.nurseId !== 'n-03'
+    );
+    const fullMeanMin =
+      fullPeersMin.reduce((s, m) => s + m.overtimeHours, 0) / fullPeersMin.length;
+    expect(m03Min.overtimeHours).toBeLessThanOrEqual(8);
+    expect(m03Min.overtimeHours).toBeLessThan(fullMeanMin);
   });
 });

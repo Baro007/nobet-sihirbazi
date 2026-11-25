@@ -8,6 +8,7 @@ import {
 } from '../lib/calendar';
 import {
   LeaveCode,
+  LeaveOvertimePolicy,
   MonthConfig,
   Nurse,
   NurseMetrics,
@@ -78,6 +79,53 @@ export function isSorumluPresentOnDay(
   });
 }
 
+export function computeInitialEmptyStreak(
+  tail?: [ShiftCode, ShiftCode, ShiftCode]
+): number {
+  if (!tail || (!tail[0] && !tail[1] && !tail[2])) return 0;
+  let streak = 0;
+  for (let i = 2; i >= 0; i--) {
+    if (tail[i] === '') streak++;
+    else break;
+  }
+  return streak;
+}
+
+/**
+ * İzinli personel fazla mesai politikasına göre her nöbetli hemşirenin
+ * beklenen aylık fazla mesai hedefini (saat) hesaplar; toplam havuz korunur.
+ */
+export function computeExpectedOvertimeTargets(
+  policy: LeaveOvertimePolicy,
+  targetHoursByNurse: ArrayLike<number>,
+  baseStatutoryHours: number,
+  totalSlotHours: number
+): number[] {
+  const n = targetHoursByNurse.length;
+  if (n === 0) return [];
+  let totalTarget = 0;
+  for (let i = 0; i < n; i++) totalTarget += targetHoursByNurse[i];
+  const netPool = totalSlotHours - totalTarget;
+  if (policy === 'equal' || netPool <= 0) {
+    const avg = netPool / n;
+    return Array.from({ length: n }, () => avg);
+  }
+  const weights = new Array<number>(n);
+  let sumW = 0;
+  for (let i = 0; i < n; i++) {
+    const deductedDays = Math.max(0, (baseStatutoryHours - targetHoursByNurse[i]) / 8);
+    let w = 1;
+    if (policy === 'proportional') {
+      w = Math.max(0.35, 1 - 0.13 * deductedDays);
+    } else {
+      w = deductedDays >= 5 ? 0.05 : deductedDays >= 3 ? 0.25 : deductedDays >= 1 ? 0.7 : 1.0;
+    }
+    weights[i] = w;
+    sumW += w;
+  }
+  return weights.map((w) => (sumW > 0 ? (netPool * w) / sumW : netPool / n));
+}
+
 export function getExpectedDailyStaffing(
   day: number,
   config: MonthConfig,
@@ -109,6 +157,7 @@ export function evaluateSchedule(
   assignments: Record<string, Record<number, ShiftCode>>
 ): ScheduleEvaluation {
   const days = getDaysInMonth(config.yearMonth);
+  const maxAllowedEmpty = config.maxConsecutiveEmptyDays ?? 3;
   const issues: ValidationIssue[] = [];
   const dailyCounts: ScheduleEvaluation['dailyCounts'] = {};
 
@@ -201,6 +250,26 @@ export function evaluateSchedule(
     const violatedSoftNegativeDays: number[] = [];
     let leaveDaysCount = 0;
 
+    const trackEmptyStreak = role === 'nobetli';
+    let emptyRun = trackEmptyStreak ? computeInitialEmptyStreak(tail) : 0;
+    let streakStart = emptyRun > 0 ? 1 - emptyRun : 1;
+    let maxEmptyStreak = 0;
+
+    const flushEmptyStreak = (endDay: number) => {
+      if (!trackEmptyStreak || maxAllowedEmpty <= 0 || emptyRun <= maxAllowedEmpty) return;
+      issues.push({
+        id: `long-empty-${nurse.id}-${streakStart}-${endDay}`,
+        severity: 'hard',
+        code: 'LONG_EMPTY_STREAK',
+        nurseId: nurse.id,
+        day: Math.min(days, Math.max(1, streakStart + maxAllowedEmpty)),
+        message:
+          streakStart <= 0
+            ? `${nurse.name}: Önceki aydan devreden boşlukla birlikte ${endDay}. güne kadar ${emptyRun} gün üst üste boşluk (hastane üst sınırı: en fazla ${maxAllowedEmpty} gün).`
+            : `${nurse.name}: ${streakStart}–${endDay}. günler arası ${emptyRun} gün üst üste boşluk (hastane üst sınırı: en fazla ${maxAllowedEmpty} gün).`,
+      });
+    };
+
     // Ay devri kontrolleri (önceki ayın son 2 günü -> yeni ayın 1. ve 2. günü)
     if (tail[2] === 'N24' || tail[2] === 'N16') {
       const s1 = shiftAt(1);
@@ -266,6 +335,17 @@ export function evaluateSchedule(
     for (let d = 1; d <= days; d++) {
       const code = shiftAt(d);
       const holOrWknd = isHolidayOrWeekend(d, config.yearMonth, config.holidays);
+
+      if (trackEmptyStreak) {
+        if (code === '') {
+          if (emptyRun === 0) streakStart = d;
+          emptyRun++;
+          if (emptyRun > maxEmptyStreak) maxEmptyStreak = emptyRun;
+        } else {
+          flushEmptyStreak(d - 1);
+          emptyRun = 0;
+        }
+      }
 
       if (code === 'YI' || code === 'R' || code === 'DI' || code === 'II') {
         leaveDaysCount++;
@@ -379,6 +459,8 @@ export function evaluateSchedule(
       }
     }
 
+    flushEmptyStreak(days);
+
     const unmatchedSet = new Set<number>();
     for (const d of positiveSet) {
       const c = shiftAt(d);
@@ -409,6 +491,7 @@ export function evaluateSchedule(
       weekendHolidayNobet,
       weekendHolidayMesai,
       threeDayGapCount,
+      maxEmptyStreak,
       positiveMatched,
       positiveTotal: positiveSet.size + positiveMesaiSet.size,
       positiveNobetMatched,
@@ -431,6 +514,15 @@ export function evaluateSchedule(
   const overtimes = activeNobetliMetrics.map((m) => m.overtimeHours);
   const hourSpread =
     overtimes.length > 0 ? Math.max(...overtimes) - Math.min(...overtimes) : 0;
+
+  const baseStatutoryHours = computeBaseStatutoryHours(config.yearMonth, config.holidays);
+  const fullMonthOvertimes = activeNobetliMetrics
+    .filter((m) => m.targetHours >= baseStatutoryHours)
+    .map((m) => m.overtimeHours);
+  const fullMonthHourSpread =
+    fullMonthOvertimes.length >= 2
+      ? Math.max(...fullMonthOvertimes) - Math.min(...fullMonthOvertimes)
+      : hourSpread;
 
   const weekendTotals = activeNobetliMetrics.map(
     (m) => m.weekendHolidayNobet + m.weekendHolidayMesai
@@ -496,6 +588,7 @@ export function evaluateSchedule(
     softWarnings,
     nurseMetrics,
     hourSpread,
+    fullMonthHourSpread,
     preferenceSatisfactionPct,
     totalNegativeViolations,
     totalNegativeRequested,
