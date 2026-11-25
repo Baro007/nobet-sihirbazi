@@ -15,6 +15,7 @@ import {
   evaluateSchedule,
   getExpectedDailyStaffing,
   isSorumluPresentOnDay,
+  resolveEffectiveLeaveDays,
   resolveEffectiveNurseRole,
 } from './validator';
 
@@ -23,6 +24,7 @@ export interface SolverInput {
   nurses: Nurse[];
   preferences: Record<string, NursePreference>;
   prevMonthFairness?: PrevMonthFairnessCarryOver;
+  lockedAssignments?: Record<string, Record<number, ShiftCode>>;
   seed?: number;
   restarts?: number;
   iterationsPerRestart?: number;
@@ -58,26 +60,32 @@ function selectExtraMesaiDays(
 ): number[] {
   if (extraNeeded <= 0) return [];
 
-  const weekdayCandidates: { day: number; avail: number }[] = [];
+  const weekdayCandidates: { day: number; avail: number; posMesaiCount: number }[] = [];
   for (let d = 1; d <= days; d++) {
     if (isHolidayOrWeekend(d, config.yearMonth, config.holidays)) continue;
     let avail = 0;
+    let posMesaiCount = 0;
     for (const n of activeNobetli) {
       const pref = preferences[n.id];
       const hasLeave = Boolean(pref?.leaveDays?.[d]);
       const hasNeg = Boolean(pref?.negativeDays?.includes(d));
       const tail = config.prevMonthTail?.[n.id];
       const blockedDay1 = d === 1 && (tail?.[2] === 'N24' || tail?.[2] === 'N16');
-      if (!hasLeave && !hasNeg && !blockedDay1) avail++;
+      if (!hasLeave && !hasNeg && !blockedDay1) {
+        avail++;
+        if (pref?.positiveMesaiDays?.includes(d)) posMesaiCount++;
+      }
     }
-    weekdayCandidates.push({ day: d, avail });
+    weekdayCandidates.push({ day: d, avail, posMesaiCount });
   }
 
   if (weekdayCandidates.length === 0) return [];
 
-  // En yüksek müsaitliğe sahip hafta içi günlerini seç ve ay geneline yay
+  // En yüksek müsaitliğe ve mesai talebine sahip hafta içi günlerini seç ve ay geneline yay
   const count = Math.min(extraNeeded, weekdayCandidates.length);
-  weekdayCandidates.sort((a, b) => b.avail - a.avail || a.day - b.day);
+  weekdayCandidates.sort(
+    (a, b) => b.posMesaiCount * 2 + b.avail - (a.posMesaiCount * 2 + a.avail) || a.day - b.day
+  );
 
   // Eğer ihtiyaç tüm hafta içinden azsa eşit aralıklı seçmeye çalışırken düşük müsaitlikli günleri ele
   const poolSize = Math.min(weekdayCandidates.length, Math.max(count, Math.ceil(count * 1.4)));
@@ -120,6 +128,7 @@ export function solveSchedule(
   const activeNurses = nurses.filter((n) => n.active).sort((a, b) => a.sortOrder - b.sortOrder);
   const activeNobetli: Nurse[] = [];
   const sorumluList: Nurse[] = [];
+  const gunduzList: Nurse[] = [];
   const pasifList: { nurse: Nurse; reason: ShiftCode }[] = [];
 
   for (const n of activeNurses) {
@@ -128,6 +137,8 @@ export function solveSchedule(
       activeNobetli.push(n);
     } else if (role === 'sorumlu') {
       sorumluList.push(n);
+    } else if (role === 'gunduz_mesai') {
+      gunduzList.push(n);
     } else {
       const code: ShiftCode =
         passiveReason === 'R' || passiveReason === 'YI' || passiveReason === 'II'
@@ -139,7 +150,7 @@ export function solveSchedule(
 
   const baseAssignments: Record<string, Record<number, ShiftCode>> = {};
 
-  // Sorumlu ve pasif izinli hemşirelerin sabit atamaları
+  // Sorumlu, gündüzcü (gece muaf) ve pasif izinli hemşirelerin sabit atamaları
   for (const n of sorumluList) {
     const row: Record<number, ShiftCode> = {};
     const leave = preferences[n.id]?.leaveDays ?? {};
@@ -148,6 +159,23 @@ export function solveSchedule(
         row[d] = leave[d];
       } else if (!isHolidayOrWeekend(d, config.yearMonth, config.holidays)) {
         row[d] = 'S8';
+      } else {
+        row[d] = '';
+      }
+    }
+    baseAssignments[n.id] = row;
+  }
+
+  const gunduzPresentByDay = new Int32Array(days);
+  for (const n of gunduzList) {
+    const row: Record<number, ShiftCode> = {};
+    const leave = preferences[n.id]?.leaveDays ?? {};
+    for (let d = 1; d <= days; d++) {
+      if (leave[d]) {
+        row[d] = leave[d];
+      } else if (!isHolidayOrWeekend(d, config.yearMonth, config.holidays)) {
+        row[d] = 'M8';
+        gunduzPresentByDay[d - 1]++;
       } else {
         row[d] = '';
       }
@@ -196,20 +224,22 @@ export function solveSchedule(
       config,
       sorumluPresent
     );
+    const dailyMesaiFromRot = Math.max(0, expectedMesai - gunduzPresentByDay[d - 1]);
     dailyN24[d - 1] = expectedNobet;
-    dailyM8[d - 1] = expectedMesai;
+    dailyM8[d - 1] = dailyMesaiFromRot;
     isHolOrWknd[d - 1] = isWeekendOrHoliday ? 1 : 0;
-    totalRequiredHours += expectedNobet * 24 + expectedMesai * 8;
+    totalRequiredHours += expectedNobet * 24 + dailyMesaiFromRot * 8;
   }
 
   const targetHours = new Int32Array(N);
   let totalTargetHours = 0;
   for (let i = 0; i < N; i++) {
-    const th = computeNurseTargetHours(
-      config.yearMonth,
-      config.holidays,
-      preferences[activeNobetli[i].id]?.leaveDays ?? {}
+    const nid = activeNobetli[i].id;
+    const effectiveLeaves = resolveEffectiveLeaveDays(
+      preferences[nid]?.leaveDays,
+      input.lockedAssignments?.[nid]
     );
+    const th = computeNurseTargetHours(config.yearMonth, config.holidays, effectiveLeaves);
     targetHours[i] = th;
     totalTargetHours += th;
   }
@@ -225,23 +255,34 @@ export function solveSchedule(
 
   // Tercih ve kısıt matrisleri (flat arrays: i * days + dIdx)
   const lockedLeave = new Uint8Array(N * days);
+  const pinnedCell = new Uint8Array(N * days);
+  const pinnedVal = new Int8Array(N * days);
   const hardNeg = new Uint8Array(N * days);
   const softNeg = new Uint8Array(N * days);
   const posNobet = new Uint8Array(N * days);
+  const posMesai = new Uint8Array(N * days);
   const bridgeThursday = new Uint8Array(N * days);
   const hasSignificantLeave = new Uint8Array(N);
   const leaveCodes: Record<number, Record<number, ShiftCode>> = {};
+  const pinnedExactCode: Record<number, Record<number, ShiftCode>> = {};
 
   // Önceki ay son 3 gün (tail): [d-2, d-1, d0]
   // Encode: 1 = N24/N16, 2 = M8/S8, 0 = boş/izin
   const tailType = new Int8Array(N * 3);
   const carryOverGap = new Int32Array(N);
   const carryOverOvertime = new Int32Array(N);
+  const carryRecentWknd = new Int32Array(N);
+  const carryYearBayram = new Int32Array(N);
+  const isBayram = new Uint8Array(days);
+  for (let d = 1; d <= days; d++) {
+    if (config.holidays[d]?.type === 'bayram') isBayram[d - 1] = 1;
+  }
 
   for (let i = 0; i < N; i++) {
     const nid = activeNobetli[i].id;
     const pref = preferences[nid];
     leaveCodes[i] = {};
+    pinnedExactCode[i] = {};
 
     const leaveMap = pref?.leaveDays ?? {};
     let leaveCnt = 0;
@@ -250,6 +291,31 @@ export function solveSchedule(
         lockedLeave[i * days + (d - 1)] = 1;
         leaveCodes[i][d - 1] = leaveMap[d];
         leaveCnt++;
+      }
+    }
+
+    const nurseLocks = input.lockedAssignments?.[nid];
+    if (nurseLocks) {
+      for (let d = 1; d <= days; d++) {
+        const idx = i * days + (d - 1);
+        if (lockedLeave[idx]) continue;
+        if (Object.prototype.hasOwnProperty.call(nurseLocks, d)) {
+          const code = nurseLocks[d];
+          if (code === 'YI' || code === 'R' || code === 'DI' || code === 'II') {
+            lockedLeave[idx] = 1;
+            leaveCodes[i][d - 1] = code;
+            leaveCnt++;
+          } else {
+            pinnedCell[idx] = 1;
+            pinnedExactCode[i][d - 1] = code;
+            pinnedVal[idx] =
+              code === 'N24' || code === 'N16'
+                ? CELL_N24
+                : code === 'M8' || code === 'S8'
+                ? CELL_M8
+                : CELL_EMPTY;
+          }
+        }
       }
     }
     if (leaveCnt >= 3) hasSignificantLeave[i] = 1;
@@ -262,6 +328,9 @@ export function solveSchedule(
     }
     for (const d of pref?.positiveNobetDays ?? []) {
       if (d >= 1 && d <= days) posNobet[i * days + (d - 1)] = 1;
+    }
+    for (const d of pref?.positiveMesaiDays ?? []) {
+      if (d >= 1 && d <= days) posMesai[i * days + (d - 1)] = 1;
     }
     for (const br of pref?.bridgeLeaveRequests ?? []) {
       if (br.wantPreThursdayNobet) {
@@ -281,13 +350,30 @@ export function solveSchedule(
 
     carryOverGap[i] = prevMonthFairness?.threeDayGapCount?.[nid] ?? 0;
     carryOverOvertime[i] = prevMonthFairness?.overtimeHours?.[nid] ?? 0;
+    carryRecentWknd[i] = prevMonthFairness?.recentWeekendShifts?.[nid] ?? 0;
+    carryYearBayram[i] = prevMonthFairness?.yearBayramShifts?.[nid] ?? 0;
   }
 
-  // Her gün için kilitli olmayan hemşire indeksleri
+  let sumRecentWknd = 0;
+  for (let i = 0; i < N; i++) sumRecentWknd += carryRecentWknd[i];
+  const meanRecentWknd = N > 0 ? sumRecentWknd / N : 0;
+
+  const nurseIdxById = new Map<string, number>();
+  for (let i = 0; i < N; i++) nurseIdxById.set(activeNobetli[i].id, i);
+  const pairRuleIndices: Array<{ a: number; b: number; type: 'separate' | 'together' }> = [];
+  for (const rule of config.pairRules ?? []) {
+    const idxA = nurseIdxById.get(rule.nurseAId);
+    const idxB = nurseIdxById.get(rule.nurseBId);
+    if (idxA !== undefined && idxB !== undefined && idxA !== idxB) {
+      pairRuleIndices.push({ a: idxA, b: idxB, type: rule.type });
+    }
+  }
+
+  // Her gün için kilitli veya sabitlenmiş olmayan hemşire indeksleri
   const unlockedByDay: number[][] = Array.from({ length: days }, (_, dIdx) => {
     const list: number[] = [];
     for (let i = 0; i < N; i++) {
-      if (!lockedLeave[i * days + dIdx]) list.push(i);
+      if (!lockedLeave[i * days + dIdx] && !pinnedCell[i * days + dIdx]) list.push(i);
     }
     return list;
   });
@@ -374,11 +460,18 @@ export function solveSchedule(
             wkNobet++;
             wkTotal++;
           }
+          if (isBayram[d] && carryYearBayram[i] > 0) {
+            cost += carryYearBayram[i] * 900;
+          }
           if (hardNeg[idx]) {
             cost += 30000;
             viol = 1;
           } else if (softNeg[idx]) {
             cost += 450;
+          }
+          if (posMesai[idx]) {
+            cost += 22000;
+            viol = 1;
           }
 
           // d+1, d+2, d+3 kontrolleri
@@ -414,6 +507,9 @@ export function solveSchedule(
             cost += 80; // Mesai ertesi hemen nöbet hafif kaçınma
           }
           if (isHolOrWknd[d]) wkTotal++;
+          if (isBayram[d] && carryYearBayram[i] > 0) {
+            cost += carryYearBayram[i] * 900;
+          }
           if (hardNeg[idx]) {
             cost += 30000;
             viol = 1;
@@ -431,6 +527,9 @@ export function solveSchedule(
             cost += 4500;
           } else if (posNobet[idx]) {
             cost += 950;
+          }
+          if (posMesai[idx]) {
+            cost += 1350;
           }
         }
       }
@@ -473,6 +572,9 @@ export function solveSchedule(
       // Geçen aydan adalet taşıma (varsa hafif dürtü)
       if (carryOverGap[i] === 0 && gapCnt === 0) cost += 250;
       if (carryOverOvertime[i] > 8 && ot > carryOverOvertime[i]) cost += 60;
+      if (carryRecentWknd[i] > meanRecentWknd && wkTotal > 0) {
+        cost += Math.round((carryRecentWknd[i] - meanRecentWknd) * wkTotal * 45);
+      }
     }
 
     const meanOt = sumOvertime / N;
@@ -504,6 +606,21 @@ export function solveSchedule(
       cost += gapSpread * gapSpread * 350;
     }
 
+    for (let p = 0; p < pairRuleIndices.length; p++) {
+      const rule = pairRuleIndices[p];
+      const baseA = rule.a * days;
+      const baseB = rule.b * days;
+      for (let d = 0; d < days; d++) {
+        const aNob = grid[baseA + d] === CELL_N24;
+        const bNob = grid[baseB + d] === CELL_N24;
+        if (rule.type === 'separate') {
+          if (aNob && bNob) cost += 6500;
+        } else if (aNob !== bNob) {
+          cost += 450;
+        }
+      }
+    }
+
     return cost;
   }
 
@@ -521,8 +638,21 @@ export function solveSchedule(
 
     for (let i = 0; i < N; i++) {
       for (let d = 0; d < days; d++) {
-        if (lockedLeave[i * days + d]) {
-          grid[i * days + d] = CELL_LOCKED_LEAVE;
+        const idx = i * days + d;
+        if (lockedLeave[idx]) {
+          grid[idx] = CELL_LOCKED_LEAVE;
+        } else if (pinnedCell[idx]) {
+          const val = pinnedVal[idx];
+          grid[idx] = val;
+          if (val === CELL_N24) {
+            nobetLeft[d] = Math.max(0, nobetLeft[d] - 1);
+            hoursSoFar[i] += 24;
+            if (isHolOrWknd[d]) wkSoFar[i]++;
+          } else if (val === CELL_M8) {
+            mesaiLeft[d] = Math.max(0, mesaiLeft[d] - 1);
+            hoursSoFar[i] += 8;
+            if (isHolOrWknd[d]) wkSoFar[i]++;
+          }
         }
       }
     }
@@ -532,7 +662,7 @@ export function solveSchedule(
       for (let i = 0; i < N; i++) {
         if (nobetLeft[d] <= 0) break;
         const idx = i * days + d;
-        if (bridgeThursday[idx] && grid[idx] === CELL_EMPTY && !hardNeg[idx]) {
+        if (bridgeThursday[idx] && !pinnedCell[idx] && grid[idx] === CELL_EMPTY && !hardNeg[idx]) {
           grid[idx] = CELL_N24;
           nobetLeft[d]--;
           hoursSoFar[i] += 24;
@@ -544,7 +674,7 @@ export function solveSchedule(
     // Yardımcı: Nöbet (N24) için dinamik uygunluk
     const isHardValidN24 = (i: number, d: number): boolean => {
       const base = i * days;
-      if (grid[base + d] !== CELL_EMPTY || hardNeg[base + d]) return false;
+      if (grid[base + d] !== CELL_EMPTY || hardNeg[base + d] || posMesai[base + d]) return false;
       if (d === 0 && (tailType[i * 3 + 2] === CELL_N24 || tailType[i * 3 + 1] === CELL_N24)) {
         return false;
       }
@@ -585,9 +715,25 @@ export function solveSchedule(
           const negB = hardNeg[b * days + d];
           if (negA !== negB) return negA - negB;
 
+          const pmA = posMesai[a * days + d];
+          const pmB = posMesai[b * days + d];
+          if (pmA !== pmB) return pmA - pmB;
+
           const posA = posNobet[a * days + d] ? -1 : 0;
           const posB = posNobet[b * days + d] ? -1 : 0;
           if (posA !== posB) return posA - posB;
+
+          const blocksPmA =
+            (d + 1 < days && posMesai[a * days + d + 1]) ||
+            (d + 2 < days && posMesai[a * days + d + 2])
+              ? 1
+              : 0;
+          const blocksPmB =
+            (d + 1 < days && posMesai[b * days + d + 1]) ||
+            (d + 2 < days && posMesai[b * days + d + 2])
+              ? 1
+              : 0;
+          if (blocksPmA !== blocksPmB) return blocksPmA - blocksPmB;
 
           const otA = hoursSoFar[a] - targetHours[a] + (isHolOrWknd[d] ? wkSoFar[a] * 8 : 0);
           const otB = hoursSoFar[b] - targetHours[b] + (isHolOrWknd[d] ? wkSoFar[b] * 8 : 0);
@@ -626,6 +772,10 @@ export function solveSchedule(
               ? 1
               : 0;
           if (d3A !== d3B) return d3A - d3B;
+
+          const pmA = posMesai[a * days + d] ? -1 : 0;
+          const pmB = posMesai[b * days + d] ? -1 : 0;
+          if (pmA !== pmB) return pmA - pmB;
 
           const otA = hoursSoFar[a] - targetHours[a];
           const otB = hoursSoFar[b] - targetHours[b];
@@ -730,7 +880,11 @@ export function solveSchedule(
             !lockedLeave[idxA1] &&
             !lockedLeave[idxB1] &&
             !lockedLeave[idxA2] &&
-            !lockedLeave[idxB2]
+            !lockedLeave[idxB2] &&
+            !pinnedCell[idxA1] &&
+            !pinnedCell[idxB1] &&
+            !pinnedCell[idxA2] &&
+            !pinnedCell[idxB2]
           ) {
             prevA1 = grid[idxA1];
             prevB1 = grid[idxB1];
@@ -819,11 +973,19 @@ export function solveSchedule(
   for (let i = 0; i < N; i++) {
     const row: Record<number, ShiftCode> = {};
     for (let d = 0; d < days; d++) {
-      const c = globalBestGrid[i * days + d];
-      if (c === CELL_N24) row[d + 1] = 'N24';
-      else if (c === CELL_M8) row[d + 1] = 'M8';
-      else if (c === CELL_LOCKED_LEAVE) row[d + 1] = leaveCodes[i][d] ?? 'YI';
-      else row[d + 1] = '';
+      const idx = i * days + d;
+      const c = globalBestGrid[idx];
+      if (pinnedCell[idx] && pinnedExactCode[i]?.[d] !== undefined) {
+        row[d + 1] = pinnedExactCode[i][d];
+      } else if (c === CELL_N24) {
+        row[d + 1] = 'N24';
+      } else if (c === CELL_M8) {
+        row[d + 1] = 'M8';
+      } else if (c === CELL_LOCKED_LEAVE) {
+        row[d + 1] = leaveCodes[i][d] ?? 'YI';
+      } else {
+        row[d + 1] = '';
+      }
     }
     assignments[activeNobetli[i].id] = row;
   }

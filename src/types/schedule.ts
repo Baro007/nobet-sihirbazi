@@ -9,9 +9,16 @@ export type ShiftCode =
   | 'DI'  // Doğum / Süt İzni
   | 'II'; // İdari / Mazeret İzni
 
-export type NurseRole = 'nobetli' | 'sorumlu' | 'pasif_izinli';
+export type NurseRole = 'nobetli' | 'sorumlu' | 'gunduz_mesai' | 'pasif_izinli';
 export type PassiveReason = 'DI' | 'R' | 'YI' | 'II' | 'OTHER';
 export type LeaveCode = 'YI' | 'R' | 'II';
+
+export interface PairRule {
+  id: string;
+  nurseAId: string;
+  nurseBId: string;
+  type: 'separate' | 'together';
+}
 
 export interface Nurse {
   id: string;
@@ -39,6 +46,7 @@ export interface NursePreference {
   yearMonth: string;
   nurseId: string;
   positiveNobetDays: number[];
+  positiveMesaiDays?: number[];
   negativeDays: number[];
   softNegativeDays: number[];
   leaveDays: Record<number, LeaveCode>;
@@ -68,6 +76,7 @@ export interface MonthConfig {
   preferenceDeadline?: string;
   prevMonthTail: Record<string, [ShiftCode, ShiftCode, ShiftCode]>;
   nurseRoleOverrides: Record<string, NurseRoleOverride>;
+  pairRules?: PairRule[];
 }
 
 export interface SolverSummary {
@@ -85,6 +94,8 @@ export interface SolverSummary {
 export interface MonthSchedule {
   yearMonth: string;
   assignments: Record<string, Record<number, ShiftCode>>;
+  lockedCells?: Record<string, number[]>;
+  status?: 'draft' | 'published';
   updatedAt: string;
   solverStats?: SolverSummary;
 }
@@ -98,7 +109,9 @@ export interface ValidationIssue {
     | 'REST_D2_N24_VIOLATION'
     | 'DAY3_MESAI_NOTICE'
     | 'LEAVE_CONFLICT'
-    | 'NEGATIVE_PREF_CONFLICT';
+    | 'NEGATIVE_PREF_CONFLICT'
+    | 'MESAI_PREF_NOBET_CONFLICT'
+    | 'PAIR_SEPARATE_CONFLICT';
   nurseId?: string;
   day?: number;
   message: string;
@@ -119,9 +132,18 @@ export interface NurseMetrics {
   threeDayGapCount: number;
   positiveMatched: number;
   positiveTotal: number;
+  positiveNobetMatched: number;
+  positiveNobetTotal: number;
+  positiveMesaiMatched: number;
+  positiveMesaiTotal: number;
+  unmatchedPositiveDays: number[];
   day3MesaiCount: number;
   negativeViolations: number;
+  negativeTotal: number;
+  violatedNegativeDays: number[];
   softNegativeViolations: number;
+  softNegativeTotal: number;
+  violatedSoftNegativeDays: number[];
   leaveDaysCount: number;
 }
 
@@ -132,6 +154,10 @@ export interface ScheduleEvaluation {
   nurseMetrics: NurseMetrics[];
   hourSpread: number;
   preferenceSatisfactionPct: number;
+  totalNegativeViolations: number;
+  totalNegativeRequested: number;
+  totalSoftNegativeViolations: number;
+  totalSoftNegativeRequested: number;
   weekendSpread: number;
   threeDayGapMin: number;
   threeDayGapMax: number;
@@ -167,4 +193,6 @@ export interface PreflightReport {
 export interface PrevMonthFairnessCarryOver {
   threeDayGapCount: Record<string, number>;
   overtimeHours: Record<string, number>;
+  recentWeekendShifts?: Record<string, number>;
+  yearBayramShifts?: Record<string, number>;
 }

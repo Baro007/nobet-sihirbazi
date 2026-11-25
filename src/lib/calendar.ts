@@ -79,6 +79,11 @@ export function getNextYearMonth(yearMonth: string): string {
   return month === 12 ? formatYearMonth(year + 1, 1) : formatYearMonth(year, month + 1);
 }
 
+export function getSuggestedActiveYearMonth(now: Date = new Date()): string {
+  const currentYm = formatYearMonth(now.getFullYear(), now.getMonth() + 1);
+  return now.getDate() >= 15 ? getNextYearMonth(currentYm) : currentYm;
+}
+
 /**
  * 2026 ve 2027 Türkiye Dini Bayram & Arife tarihleri + her yıl sabit resmî tatiller.
  */
@@ -308,6 +313,23 @@ export function normalizeTurkishText(input: string): string {
     .trim()
     .toLocaleUpperCase('tr-TR')
     .replace(/\s+/g, ' ');
+}
+
+export function toTurkishTitleCase(input: string): string {
+  const cleaned = input.trim().replace(/\s+/g, ' ');
+  if (!cleaned) return '';
+  return cleaned
+    .split(' ')
+    .map((token) => {
+      if (/^\d+[a-zA-ZçğıöşüÇĞİÖŞÜ]+$/.test(token)) {
+        return token.toLocaleUpperCase('tr-TR');
+      }
+      const lower = token.toLocaleLowerCase('tr-TR');
+      const match = lower.match(/^([^a-zçğıöşü]*)([a-zçğıöşü])(.*)$/);
+      if (!match) return lower;
+      return `${match[1]}${match[2].toLocaleUpperCase('tr-TR')}${match[3]}`;
+    })
+    .join(' ');
 }
 
 export function foldTurkishSearch(input: string): string {

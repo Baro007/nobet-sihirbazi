@@ -3,16 +3,28 @@ import {
   AlertCircle,
   AlertTriangle,
   ArrowLeftRight,
+  Calendar,
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
   Download,
   Eraser,
+  Eye,
+  EyeOff,
   FileSpreadsheet,
+  Globe,
+  Lock,
+  MessageSquare,
   MousePointerClick,
   Pencil,
+  Pin,
   Printer,
   RefreshCw,
+  Send,
   Sparkles,
+  Stethoscope,
   Undo2,
+  User,
 } from 'lucide-react';
 import {
   formatMonthLabelTR,
@@ -23,8 +35,15 @@ import {
   parseYearMonth,
   TURKISH_WEEKDAYS_SHORT,
 } from '../lib/calendar';
+import {
+  buildMissingPrefsWhatsAppText,
+  buildPersonalWhatsAppText,
+  buildWardWhatsAppText,
+  downloadNurseIcs,
+} from '../lib/exportUtils';
 import { MANUAL_SHIFT_OPTIONS, SHIFT_META } from '../lib/shifts';
 import { exportYHFR31Excel, fillUploadedYHFR31Template } from '../lib/yhfr31Export';
+import { suggestReplacementsForCell } from '../solver/advisor';
 import {
   evaluateSchedule,
   resolveEffectiveNurseRole,
@@ -45,15 +64,20 @@ interface ScheduleViewProps {
   preferences: Record<string, NursePreference>;
   schedule: MonthSchedule | undefined;
   localTcMap: Record<string, string>;
+  selectedNurseId: string;
+  onSelectNurseId: (id: string) => void;
   isAdmin: boolean;
   solving: boolean;
   solveProgress: number;
   onSolve: (newSeed?: boolean) => void;
   onUpdateAssignments: (next: Record<string, Record<number, ShiftCode>>) => void;
+  onTogglePublish: () => void;
+  onTogglePinCell: (nurseId: string, day: number) => void;
+  onClearPins: () => void;
   onNotify: (type: 'success' | 'error' | 'warning' | 'info', msg: string) => void;
 }
 
-type ManualTool = 'picker' | 'swap' | ShiftCode;
+type ManualTool = 'picker' | 'swap' | 'pin' | ShiftCode;
 
 export const ScheduleView: React.FC<ScheduleViewProps> = ({
   config,
@@ -61,11 +85,16 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
   preferences,
   schedule,
   localTcMap,
+  selectedNurseId,
+  onSelectNurseId,
   isAdmin,
   solving,
   solveProgress,
   onSolve,
   onUpdateAssignments,
+  onTogglePublish,
+  onTogglePinCell,
+  onClearPins,
   onNotify,
 }) => {
   const [manualTool, setManualTool] = useState<ManualTool>('picker');
@@ -73,12 +102,17 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
   const [activeCell, setActiveCell] = useState<{ nurseId: string; day: number } | null>(null);
   const [history, setHistory] = useState<Record<string, Record<number, ShiftCode>>[]>([]);
   const [showIssues, setShowIssues] = useState(true);
+  const [showPrefOverlay, setShowPrefOverlay] = useState(true);
+  const [showTeamPrefsPanel, setShowTeamPrefsPanel] = useState(true);
+  const [showAdvisorPanel, setShowAdvisorPanel] = useState(false);
+  const [advisorShiftType, setAdvisorShiftType] = useState<'N24' | 'M8'>('N24');
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     setHistory([]);
     setSwapSource(null);
     setActiveCell(null);
+    setShowAdvisorPanel(false);
   }, [config.yearMonth]);
 
   const daysInMonth = getDaysInMonth(config.yearMonth);
@@ -92,6 +126,39 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
 
   const assignments = useMemo(() => schedule?.assignments ?? {}, [schedule]);
   const hasAnyAssignment = Object.keys(assignments).length > 0;
+  const lockedCells = useMemo(() => schedule?.lockedCells ?? {}, [schedule]);
+  const pinnedCount = useMemo(
+    () => Object.values(lockedCells).reduce((sum, arr) => sum + (arr?.length ?? 0), 0),
+    [lockedCells]
+  );
+  const isPublished = (schedule?.status ?? 'published') === 'published';
+
+  const copyToClipboard = async (text: string, successMsg: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      onNotify('success', successMsg);
+    } catch {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'fixed';
+        ta.style.left = '-9999px';
+        ta.style.top = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        const copied = document.execCommand('copy');
+        document.body.removeChild(ta);
+        if (copied) {
+          onNotify('success', successMsg);
+          return;
+        }
+      } catch {
+        // Yedek kopyalama başarısız
+      }
+      onNotify('warning', 'Panoya otomatik kopyalanamadı; tarayıcı iznini kontrol edin.');
+    }
+  };
 
   const preflight = useMemo(
     () => runPreflightChecks(config, nurses, preferences),
@@ -102,6 +169,36 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
     () => evaluateSchedule(config, nurses, preferences, assignments),
     [config, nurses, preferences, assignments]
   );
+
+  const teamPrefSummary = useMemo(() => {
+    const expectedList = orderedNurses.filter(
+      (n) => resolveEffectiveNurseRole(n, config).role !== 'pasif_izinli'
+    );
+    const submitted = expectedList.filter((n) => Boolean(preferences[n.id]?.updatedAt));
+    const missing = expectedList.filter((n) => !preferences[n.id]?.updatedAt);
+    const notesList = orderedNurses
+      .map((n) => ({ nurse: n, note: preferences[n.id]?.notes?.trim() ?? '' }))
+      .filter((x) => x.note.length > 0);
+    return { expectedList, submitted, missing, notesList };
+  }, [orderedNurses, config, preferences]);
+
+  const personalNurse = useMemo(
+    () => orderedNurses.find((n) => n.id === selectedNurseId) ?? null,
+    [orderedNurses, selectedNurseId]
+  );
+
+  const advisorCandidates = useMemo(() => {
+    if (!showAdvisorPanel || !activeCell) return [];
+    return suggestReplacementsForCell({
+      config,
+      nurses,
+      preferences,
+      assignments,
+      targetNurseId: activeCell.nurseId,
+      day: activeCell.day,
+      desiredShift: advisorShiftType,
+    });
+  }, [showAdvisorPanel, activeCell, config, nurses, preferences, assignments, advisorShiftType]);
 
   const cellIssuesMap = useMemo(() => {
     const map = new Map<string, ValidationIssue[]>();
@@ -152,6 +249,9 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
         if (roleInfo.role === 'sorumlu') {
           row[d] =
             leaveMap[d] ?? (!isHolidayOrWeekend(d, config.yearMonth, config.holidays) ? 'S8' : '');
+        } else if (roleInfo.role === 'gunduz_mesai') {
+          row[d] =
+            leaveMap[d] ?? (!isHolidayOrWeekend(d, config.yearMonth, config.holidays) ? 'M8' : '');
         } else if (roleInfo.role === 'pasif_izinli') {
           const reasonCode: ShiftCode =
             roleInfo.passiveReason === 'R' ||
@@ -177,6 +277,11 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
   const handleCellClick = (nurseId: string, day: number) => {
     if (!isAdmin) return;
 
+    if (manualTool === 'pin') {
+      onTogglePinCell(nurseId, day);
+      return;
+    }
+
     if (manualTool === 'swap') {
       if (!swapSource) {
         setSwapSource({ nurseId, day });
@@ -200,9 +305,15 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
     }
 
     if (manualTool === 'picker') {
-      setActiveCell((prev) =>
-        prev && prev.nurseId === nurseId && prev.day === day ? null : { nurseId, day }
-      );
+      const sameCell = activeCell && activeCell.nurseId === nurseId && activeCell.day === day;
+      setShowAdvisorPanel(false);
+      if (sameCell) {
+        setActiveCell(null);
+      } else {
+        const currentShift = assignments[nurseId]?.[day] ?? '';
+        setAdvisorShiftType(currentShift === 'M8' ? 'M8' : 'N24');
+        setActiveCell({ nurseId, day });
+      }
       return;
     }
 
@@ -217,6 +328,25 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
     const next = cloneAssignments(assignments);
     next[nurseId][day] = code;
     commitManualChange(next);
+    setShowAdvisorPanel(false);
+    setActiveCell(null);
+  };
+
+  const handleApplyReplacement = (
+    candidateId: string,
+    mode: 'report' | 'clear'
+  ) => {
+    if (!activeCell) return;
+    const next = cloneAssignments(assignments);
+    next[activeCell.nurseId][activeCell.day] = mode === 'report' ? 'R' : '';
+    next[candidateId][activeCell.day] = advisorShiftType;
+    commitManualChange(next);
+    const candName = orderedNurses.find((n) => n.id === candidateId)?.name ?? 'Yedek personel';
+    onNotify(
+      'success',
+      `${activeCell.day}. gün için ${candName} (${advisorShiftType}) atandı.`
+    );
+    setShowAdvisorPanel(false);
     setActiveCell(null);
   };
 
@@ -373,6 +503,126 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
               </ul>
             </div>
           )}
+
+          {/* Sorumluya Özel: Ekip Tercih Özeti & Gizli Hemşire Notları */}
+          <div className="rounded-2xl border border-indigo-200 bg-white p-4 shadow-sm dark:border-indigo-900/60 dark:bg-slate-900">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <button
+                type="button"
+                onClick={() => setShowTeamPrefsPanel((v) => !v)}
+                className="flex items-center gap-2 text-left text-xs font-bold text-slate-900 dark:text-white sm:text-sm"
+              >
+                <MessageSquare className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
+                <span>
+                  Ekip Tercih Özeti &amp; Gizli Notlar ({teamPrefSummary.submitted.length}/
+                  {teamPrefSummary.expectedList.length} kişi girdi · 🔒{' '}
+                  {teamPrefSummary.notesList.length} not)
+                </span>
+                {showTeamPrefsPanel ? (
+                  <ChevronUp className="h-4 w-4 text-slate-400" />
+                ) : (
+                  <ChevronDown className="h-4 w-4 text-slate-400" />
+                )}
+              </button>
+
+              {teamPrefSummary.missing.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    void copyToClipboard(
+                      buildMissingPrefsWhatsAppText(
+                        config.yearMonth,
+                        teamPrefSummary.missing,
+                        config.preferenceDeadline
+                      ),
+                      'Eksik tercih hatırlatma mesajı kopyalandı!'
+                    )
+                  }
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-[11px] font-semibold text-emerald-800 hover:bg-emerald-100 dark:border-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"
+                >
+                  <Send className="h-3.5 w-3.5" /> Eksiklere Hatırlatma Kopyala (
+                  {teamPrefSummary.missing.length})
+                </button>
+              )}
+            </div>
+
+            {showTeamPrefsPanel && (
+              <div className="mt-3 space-y-3 border-t border-slate-100 pt-3 text-xs dark:border-slate-800">
+                <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
+                  <div
+                    className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-emerald-500 transition-all"
+                    style={{
+                      width: `${
+                        teamPrefSummary.expectedList.length > 0
+                          ? Math.round(
+                              (teamPrefSummary.submitted.length /
+                                teamPrefSummary.expectedList.length) *
+                                100
+                            )
+                          : 0
+                      }%`,
+                    }}
+                  />
+                </div>
+
+                {teamPrefSummary.missing.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-[11px] font-semibold text-amber-700 dark:text-amber-300">
+                      Henüz tercih girmeyenler:
+                    </span>
+                    {teamPrefSummary.missing.map((n) => (
+                      <span
+                        key={n.id}
+                        className="rounded-lg bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-800 dark:bg-amber-950/40 dark:text-amber-200"
+                      >
+                        {n.name}
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                {teamPrefSummary.notesList.length > 0 && (
+                  <div className="rounded-xl border border-indigo-200 bg-indigo-50/60 p-3 dark:border-indigo-900 dark:bg-indigo-950/30">
+                    <div className="mb-1.5 flex items-center gap-1.5 text-[11px] font-bold text-indigo-900 dark:text-indigo-200">
+                      <Lock className="h-3.5 w-3.5" /> Sorumlu Hemşireye Özel Notlar (Sadece siz görürsünüz)
+                    </div>
+                    <ul className="space-y-1 text-xs text-slate-800 dark:text-slate-200">
+                      {teamPrefSummary.notesList.map(({ nurse, note }) => (
+                        <li key={nurse.id}>
+                          <strong>{nurse.name}:</strong> {note}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {teamPrefSummary.submitted.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {teamPrefSummary.submitted.map((n) => {
+                      const p = preferences[n.id];
+                      const leaveCnt = Object.keys(p?.leaveDays ?? {}).length;
+                      return (
+                        <div
+                          key={n.id}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] dark:border-slate-700 dark:bg-slate-800"
+                        >
+                          <span className="font-semibold text-slate-800 dark:text-slate-200">
+                            {n.name}
+                          </span>
+                          <span className="text-slate-500">
+                            🟢{p?.positiveNobetDays?.length ?? 0} · 🔵
+                            {p?.positiveMesaiDays?.length ?? 0} · 🔴{p?.negativeDays?.length ?? 0} ·
+                            🟡{p?.softNegativeDays?.length ?? 0}
+                            {leaveCnt > 0 ? ` · 🟣${leaveCnt}` : ''}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </section>
       )}
 
@@ -388,18 +638,54 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
                 className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-teal-600 px-4 py-2.5 text-xs font-bold text-white shadow-sm hover:from-indigo-700 hover:to-teal-700 disabled:opacity-50"
               >
                 <Sparkles className={`h-4 w-4 ${solving ? 'animate-spin' : ''}`} />
-                {solving ? `Çözülüyor (%${solveProgress})...` : 'Akıllı Çizelge Oluştur'}
+                {solving
+                  ? `Çözülüyor (%${solveProgress})...`
+                  : pinnedCount > 0
+                  ? `Sabitleri Koruyarak Çöz (📌 ${pinnedCount})`
+                  : 'Akıllı Çizelge Oluştur'}
               </button>
 
-              {hasAnyAssignment && (
+              {pinnedCount > 0 && (
                 <button
                   type="button"
-                  disabled={solving}
-                  onClick={() => onSolve(true)}
-                  className="inline-flex items-center gap-1.5 rounded-xl border border-indigo-300 bg-indigo-50 px-3.5 py-2.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 disabled:opacity-50 dark:border-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300"
+                  onClick={onClearPins}
+                  className="inline-flex items-center gap-1 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-[11px] font-semibold text-amber-800 hover:bg-amber-100 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-300"
                 >
-                  <RefreshCw className="h-3.5 w-3.5" /> Yeni Alternatif
+                  Sabitleri Temizle ({pinnedCount})
                 </button>
+              )}
+
+              {hasAnyAssignment && (
+                <>
+                  <button
+                    type="button"
+                    disabled={solving}
+                    onClick={() => onSolve(true)}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-indigo-300 bg-indigo-50 px-3.5 py-2.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 disabled:opacity-50 dark:border-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300"
+                  >
+                    <RefreshCw className="h-3.5 w-3.5" /> Yeni Alternatif
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={onTogglePublish}
+                    className={`inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2.5 text-xs font-bold shadow-sm transition ${
+                      isPublished
+                        ? 'border border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200'
+                        : 'bg-indigo-600 text-white hover:bg-indigo-700'
+                    }`}
+                  >
+                    {isPublished ? (
+                      <>
+                        <Lock className="h-3.5 w-3.5" /> Yayında (Taslağa Çek)
+                      </>
+                    ) : (
+                      <>
+                        <Globe className="h-3.5 w-3.5" /> Listeyi Servise Yayınla
+                      </>
+                    )}
+                  </button>
+                </>
               )}
 
               {hasAnyAssignment && (
@@ -428,7 +714,7 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
           )}
         </div>
 
-        {hasAnyAssignment && (
+        {hasAnyAssignment && (isAdmin || isPublished) && (
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
@@ -440,6 +726,18 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
 
             {isAdmin && (
               <>
+                <button
+                  type="button"
+                  onClick={() =>
+                    void copyToClipboard(
+                      buildWardWhatsAppText(config.yearMonth, config, nurses, assignments),
+                      'Tüm ayın servis listesi WhatsApp formatında kopyalandı!'
+                    )
+                  }
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-teal-300 bg-teal-50 px-3.5 py-2.5 text-xs font-semibold text-teal-800 hover:bg-teal-100 dark:border-teal-700 dark:bg-teal-950/40 dark:text-teal-300"
+                >
+                  <MessageSquare className="h-4 w-4" /> WhatsApp Listesi Kopyala
+                </button>
                 <input
                   ref={fileInputRef}
                   type="file"
@@ -469,7 +767,18 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
         )}
       </section>
 
-      {!hasAnyAssignment ? (
+      {hasAnyAssignment && !isAdmin && !isPublished ? (
+        <div className="rounded-2xl border border-dashed border-amber-300 bg-amber-50/70 p-10 text-center dark:border-amber-800 dark:bg-amber-950/20">
+          <Lock className="mx-auto mb-3 h-9 w-9 text-amber-600 dark:text-amber-400" />
+          <h3 className="text-base font-bold text-slate-900 dark:text-white">
+            {formatMonthLabelTR(config.yearMonth)} çizelgesi şu an taslak aşamasında
+          </h3>
+          <p className="mx-auto mt-1 max-w-md text-xs text-slate-600 dark:text-slate-400">
+            Sorumlu hemşire son kontrolleri tamamlayıp yayınladığında nöbet çizelgeniz ve telefon
+            takvimi indirme seçeneği burada açılacaktır.
+          </p>
+        </div>
+      ) : !hasAnyAssignment ? (
         <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-12 text-center dark:border-slate-700 dark:bg-slate-900">
           <Sparkles className="mx-auto mb-3 h-10 w-10 text-indigo-500" />
           <h3 className="text-base font-bold text-slate-900 dark:text-white">
@@ -495,70 +804,187 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
         </div>
       ) : (
         <>
-          {/* Çözüm Kalitesi Özet Kartları */}
-          <section className="no-print grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <div className="rounded-xl border border-slate-200 bg-white p-3.5 dark:border-slate-800 dark:bg-slate-900">
-              <div className="text-xs text-slate-500 dark:text-slate-400">Sert Kural İhlali</div>
-              <div
-                className={`mt-1 flex items-center gap-1.5 text-xl font-bold ${
-                  evaluation.hardViolations === 0 ? 'text-emerald-600' : 'text-rose-600'
-                }`}
-              >
-                {evaluation.hardViolations === 0 ? (
-                  <>
-                    <CheckCircle2 className="h-5 w-5" /> 0 İhlal
-                  </>
-                ) : (
-                  <>
-                    <AlertCircle className="h-5 w-5" /> {evaluation.hardViolations} İhlal
-                  </>
+          {/* Kişisel Nöbet Kartı & Telefon Takvimine Aktarım */}
+          <section className="no-print rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <User className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
+                <span className="text-xs font-bold text-slate-800 dark:text-slate-100 sm:text-sm">
+                  Kişisel Nöbet Kartım:
+                </span>
+                <select
+                  value={personalNurse?.id ?? ''}
+                  onChange={(e) => onSelectNurseId(e.target.value)}
+                  className="rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                >
+                  <option value="">— Adınızı seçin —</option>
+                  {orderedNurses.map((n) => (
+                    <option key={n.id} value={n.id}>
+                      {n.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {personalNurse && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      downloadNurseIcs(
+                        config.yearMonth,
+                        config.clinicName,
+                        personalNurse,
+                        assignments[personalNurse.id] ?? {}
+                      );
+                      onNotify(
+                        'success',
+                        `${personalNurse.name} için telefon takvimi (.ics) indirildi!`
+                      );
+                    }}
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-indigo-700"
+                  >
+                    <Calendar className="h-3.5 w-3.5" /> Telefon Takvimine Ekle (.ics)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const m = evaluation.nurseMetrics.find(
+                        (x) => x.nurseId === personalNurse.id
+                      );
+                      void copyToClipboard(
+                        buildPersonalWhatsAppText(
+                          config.yearMonth,
+                          config.clinicName,
+                          personalNurse,
+                          assignments[personalNurse.id] ?? {},
+                          m?.targetHours ?? 0
+                        ),
+                        `${personalNurse.name} kişisel nöbet özeti kopyalandı!`
+                      );
+                    }}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                  >
+                    <MessageSquare className="h-3.5 w-3.5" /> Kendi Listemi Kopyala
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {personalNurse && (
+              <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-slate-100 pt-2.5 text-xs dark:border-slate-800">
+                {Array.from({ length: daysInMonth }, (_, i) => i + 1)
+                  .filter((d) => Boolean(assignments[personalNurse.id]?.[d]))
+                  .map((d) => {
+                    const code = assignments[personalNurse.id][d];
+                    const dow = TURKISH_WEEKDAYS_SHORT[getDayOfWeek(config.yearMonth, d)];
+                    return (
+                      <span
+                        key={d}
+                        className={`inline-flex items-center gap-1 rounded-lg px-2 py-0.5 text-[11px] ${SHIFT_META[code].badgeClass}`}
+                      >
+                        <strong>
+                          {d} {dow}:
+                        </strong>{' '}
+                        {SHIFT_META[code].shortLabel}
+                      </span>
+                    );
+                  })}
+                {Array.from({ length: daysInMonth }, (_, i) => i + 1).every(
+                  (d) => !assignments[personalNurse.id]?.[d]
+                ) && (
+                  <span className="text-[11px] text-slate-500">
+                    Bu ayda atanmış vardiya bulunmuyor.
+                  </span>
                 )}
               </div>
-              <div className="text-[11px] text-slate-500 dark:text-slate-400">
-                {evaluation.softWarnings} yumuşak uyarı (3. gün mesai vb.)
-              </div>
-            </div>
-
-            <div className="rounded-xl border border-slate-200 bg-white p-3.5 dark:border-slate-800 dark:bg-slate-900">
-              <div className="text-xs text-slate-500 dark:text-slate-400">Saat Farkı (Max–Min)</div>
-              <div
-                className={`mt-1 text-xl font-bold ${
-                  evaluation.hourSpread <= 8
-                    ? 'text-emerald-600'
-                    : evaluation.hourSpread <= 16
-                    ? 'text-indigo-600 dark:text-indigo-400'
-                    : 'text-amber-600'
-                }`}
-              >
-                {evaluation.hourSpread} saat
-              </div>
-              <div className="text-[11px] text-slate-500 dark:text-slate-400">
-                Hedef: en fazla 8–16 saat fark
-              </div>
-            </div>
-
-            <div className="rounded-xl border border-slate-200 bg-white p-3.5 dark:border-slate-800 dark:bg-slate-900">
-              <div className="text-xs text-slate-500 dark:text-slate-400">Nöbet İsteği Karşılama</div>
-              <div className="mt-1 text-xl font-bold text-indigo-600 dark:text-indigo-400">
-                %{evaluation.preferenceSatisfactionPct}
-              </div>
-              <div className="text-[11px] text-slate-500 dark:text-slate-400">
-                Hafta sonu farkı: {evaluation.weekendSpread}
-              </div>
-            </div>
-
-            <div className="rounded-xl border border-slate-200 bg-white p-3.5 dark:border-slate-800 dark:bg-slate-900">
-              <div className="text-xs text-slate-500 dark:text-slate-400">3 Günlük Boşluk Aralığı</div>
-              <div className="mt-1 text-xl font-bold text-slate-900 dark:text-white">
-                {evaluation.threeDayGapMin}–{evaluation.threeDayGapMax} kez
-              </div>
-              <div className="text-[11px] text-slate-500 dark:text-slate-400">
-                {schedule?.solverStats
-                  ? `${schedule.solverStats.durationMs} ms sürede çözüldü`
-                  : 'Manuel düzenleme'}
-              </div>
-            </div>
+            )}
           </section>
+
+          {/* Çözüm Kalitesi Özet Kartları (Yalnızca Sorumlu) */}
+          {isAdmin && (
+            <section className="no-print grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <div className="rounded-xl border border-slate-200 bg-white p-3.5 dark:border-slate-800 dark:bg-slate-900">
+                <div className="text-xs text-slate-500 dark:text-slate-400">Sert Kural İhlali</div>
+                <div
+                  className={`mt-1 flex items-center gap-1.5 text-xl font-bold ${
+                    evaluation.hardViolations === 0 ? 'text-emerald-600' : 'text-rose-600'
+                  }`}
+                >
+                  {evaluation.hardViolations === 0 ? (
+                    <>
+                      <CheckCircle2 className="h-5 w-5" /> 0 İhlal
+                    </>
+                  ) : (
+                    <>
+                      <AlertCircle className="h-5 w-5" /> {evaluation.hardViolations} İhlal
+                    </>
+                  )}
+                </div>
+                <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                  {evaluation.softWarnings} yumuşak uyarı (3. gün mesai vb.)
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-slate-200 bg-white p-3.5 dark:border-slate-800 dark:bg-slate-900">
+                <div className="text-xs text-slate-500 dark:text-slate-400">Saat Farkı (Max–Min)</div>
+                <div
+                  className={`mt-1 text-xl font-bold ${
+                    evaluation.hourSpread <= 8
+                      ? 'text-emerald-600'
+                      : evaluation.hourSpread <= 16
+                      ? 'text-indigo-600 dark:text-indigo-400'
+                      : 'text-amber-600'
+                  }`}
+                >
+                  {evaluation.hourSpread} saat
+                </div>
+                <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                  Hedef: en fazla 8–16 saat fark
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-slate-200 bg-white p-3.5 dark:border-slate-800 dark:bg-slate-900">
+                <div className="text-xs text-slate-500 dark:text-slate-400">Tercih Karşılama</div>
+                <div className="mt-1 text-xl font-bold text-indigo-600 dark:text-indigo-400">
+                  %{evaluation.preferenceSatisfactionPct}
+                </div>
+                <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-slate-500 dark:text-slate-400">
+                  <span
+                    className={
+                      evaluation.totalNegativeViolations > 0
+                        ? 'font-semibold text-rose-600 dark:text-rose-400'
+                        : 'text-emerald-600 dark:text-emerald-400'
+                    }
+                  >
+                    🔴 Delinen: {evaluation.totalNegativeViolations}
+                  </span>
+                  <span
+                    className={
+                      evaluation.totalSoftNegativeViolations > 0
+                        ? 'font-semibold text-amber-600 dark:text-amber-400'
+                        : 'text-emerald-600 dark:text-emerald-400'
+                    }
+                  >
+                    🟡 Düşen: {evaluation.totalSoftNegativeViolations}
+                  </span>
+                  <span>H.Sonu farkı: {evaluation.weekendSpread}</span>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-slate-200 bg-white p-3.5 dark:border-slate-800 dark:bg-slate-900">
+                <div className="text-xs text-slate-500 dark:text-slate-400">3 Günlük Boşluk Aralığı</div>
+                <div className="mt-1 text-xl font-bold text-slate-900 dark:text-white">
+                  {evaluation.threeDayGapMin}–{evaluation.threeDayGapMax} kez
+                </div>
+                <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                  {schedule?.solverStats
+                    ? `${schedule.solverStats.durationMs} ms sürede çözüldü`
+                    : 'Manuel düzenleme'}
+                </div>
+              </div>
+            </section>
+          )}
 
           {/* Yazdırma için resmi başlık */}
           <div className="hidden print-only mb-2 border border-slate-700 p-2 text-center">
@@ -629,6 +1055,7 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
                         setManualTool('swap');
                         setActiveCell(null);
                         setSwapSource(null);
+                        setShowAdvisorPanel(false);
                       }}
                       className={`inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-[11px] font-semibold transition ${
                         manualTool === 'swap'
@@ -637,6 +1064,42 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
                       }`}
                     >
                       <ArrowLeftRight className="h-3.5 w-3.5" /> Değiş-Tokuş
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setManualTool((t) => (t === 'pin' ? 'picker' : 'pin'));
+                        setActiveCell(null);
+                        setSwapSource(null);
+                        setShowAdvisorPanel(false);
+                      }}
+                      title="Sabitlenen hücreler yeniden çözmede korunur"
+                      className={`inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-[11px] font-semibold transition ${
+                        manualTool === 'pin'
+                          ? 'border-amber-600 bg-amber-600 text-white'
+                          : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200'
+                      }`}
+                    >
+                      <Pin className="h-3.5 w-3.5" /> Sabitle
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setShowPrefOverlay((v) => !v)}
+                      title="Hücre köşelerinde hemşirelerin tercih renklerini gösterir"
+                      className={`inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-[11px] font-semibold transition ${
+                        showPrefOverlay
+                          ? 'border-sky-500 bg-sky-50 text-sky-800 dark:border-sky-700 dark:bg-sky-950/50 dark:text-sky-200'
+                          : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200'
+                      }`}
+                    >
+                      {showPrefOverlay ? (
+                        <Eye className="h-3.5 w-3.5" />
+                      ) : (
+                        <EyeOff className="h-3.5 w-3.5" />
+                      )}
+                      Tercihler
                     </button>
 
                     <span className="mx-1 h-4 w-px bg-slate-300 dark:bg-slate-600" />
@@ -686,38 +1149,136 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
                   </button>
                 </div>
 
-                {/* Kırpılmayan Seçili Hücre İşlem Çubuğu */}
+                {/* Kırpılmayan Seçili Hücre İşlem Çubuğu & Acil Yedek Danışmanı */}
                 {manualTool === 'picker' && activeCell && (
-                  <div className="flex flex-wrap items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50/90 px-2.5 py-1.5 text-xs dark:border-indigo-800 dark:bg-indigo-950/50">
-                    <span className="font-bold text-indigo-900 dark:text-indigo-200">
-                      Seçili Hücre:{' '}
-                      {orderedNurses.find((n) => n.id === activeCell.nurseId)?.name ?? ''} ·{' '}
-                      {activeCell.day}. Gün —
-                    </span>
-                    {MANUAL_SHIFT_OPTIONS.map((opt) => {
-                      const currentVal = assignments[activeCell.nurseId]?.[activeCell.day] ?? '';
-                      return (
-                        <button
-                          key={opt || 'empty'}
-                          type="button"
-                          onClick={() => handleSetCellShift(activeCell.nurseId, activeCell.day, opt)}
-                          className={`rounded-md px-2 py-0.5 text-[11px] font-semibold transition ${
-                            currentVal === opt
-                              ? 'bg-indigo-600 text-white'
-                              : 'bg-white text-slate-800 hover:bg-indigo-100 dark:bg-slate-800 dark:text-slate-200'
-                          }`}
-                        >
-                          {opt === '' ? 'Boş' : opt === 'S8' ? 'S8' : SHIFT_META[opt].shortLabel}
-                        </button>
-                      );
-                    })}
-                    <button
-                      type="button"
-                      onClick={() => setActiveCell(null)}
-                      className="ml-auto text-[11px] font-medium text-slate-500 hover:text-slate-800 dark:text-slate-400"
-                    >
-                      Kapat
-                    </button>
+                  <div className="space-y-2 rounded-lg border border-indigo-200 bg-indigo-50/90 px-2.5 py-2 text-xs dark:border-indigo-800 dark:bg-indigo-950/50">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="font-bold text-indigo-900 dark:text-indigo-200">
+                        Seçili Hücre:{' '}
+                        {orderedNurses.find((n) => n.id === activeCell.nurseId)?.name ?? ''} ·{' '}
+                        {activeCell.day}. Gün —
+                      </span>
+                      {MANUAL_SHIFT_OPTIONS.map((opt) => {
+                        const currentVal = assignments[activeCell.nurseId]?.[activeCell.day] ?? '';
+                        return (
+                          <button
+                            key={opt || 'empty'}
+                            type="button"
+                            onClick={() =>
+                              handleSetCellShift(activeCell.nurseId, activeCell.day, opt)
+                            }
+                            className={`rounded-md px-2 py-0.5 text-[11px] font-semibold transition ${
+                              currentVal === opt
+                                ? 'bg-indigo-600 text-white'
+                                : 'bg-white text-slate-800 hover:bg-indigo-100 dark:bg-slate-800 dark:text-slate-200'
+                            }`}
+                          >
+                            {opt === '' ? 'Boş' : opt === 'S8' ? 'S8' : SHIFT_META[opt].shortLabel}
+                          </button>
+                        );
+                      })}
+                      <button
+                        type="button"
+                        onClick={() => onTogglePinCell(activeCell.nurseId, activeCell.day)}
+                        className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-semibold transition ${
+                          lockedCells[activeCell.nurseId]?.includes(activeCell.day)
+                            ? 'bg-amber-500 text-white'
+                            : 'bg-white text-amber-800 hover:bg-amber-100 dark:bg-slate-800 dark:text-amber-300'
+                        }`}
+                      >
+                        <Pin className="h-3 w-3" />{' '}
+                        {lockedCells[activeCell.nurseId]?.includes(activeCell.day)
+                          ? 'Sabitli'
+                          : 'Sabitle'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setShowAdvisorPanel((v) => !v)}
+                        className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-semibold transition ${
+                          showAdvisorPanel
+                            ? 'bg-teal-600 text-white'
+                            : 'bg-white text-teal-800 hover:bg-teal-100 dark:bg-slate-800 dark:text-teal-300'
+                        }`}
+                      >
+                        <Stethoscope className="h-3 w-3" /> Uygun Yedek Öner
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowAdvisorPanel(false);
+                          setActiveCell(null);
+                        }}
+                        className="ml-auto text-[11px] font-medium text-slate-500 hover:text-slate-800 dark:text-slate-400"
+                      >
+                        Kapat
+                      </button>
+                    </div>
+
+                    {showAdvisorPanel && (
+                      <div className="rounded-lg border border-teal-200 bg-white p-2.5 dark:border-teal-800 dark:bg-slate-900">
+                        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                          <span className="text-[11px] font-bold text-teal-900 dark:text-teal-200">
+                            🚑 {activeCell.day}. Gün İçin En Uygun Yedek Adayları (Dinlenme &amp; Kırmızı Korumalı)
+                          </span>
+                          <div className="inline-flex rounded-lg border border-slate-200 bg-slate-100 p-0.5 dark:border-slate-700 dark:bg-slate-800">
+                            {(['N24', 'M8'] as const).map((t) => (
+                              <button
+                                key={t}
+                                type="button"
+                                onClick={() => setAdvisorShiftType(t)}
+                                className={`rounded px-2 py-0.5 text-[10px] font-semibold ${
+                                  advisorShiftType === t
+                                    ? 'bg-teal-600 text-white'
+                                    : 'text-slate-600 dark:text-slate-300'
+                                }`}
+                              >
+                                {t === 'N24' ? '24s Nöbet' : '08–16 Mesai'}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        {advisorCandidates.length === 0 ? (
+                          <p className="text-[11px] text-amber-700 dark:text-amber-300">
+                            Bu gün için kural ihlali yapmayan uygun yedek aday bulunamadı.
+                          </p>
+                        ) : (
+                          <div className="space-y-1.5">
+                            {advisorCandidates.map((cand) => (
+                              <div
+                                key={cand.nurseId}
+                                className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-[11px] dark:border-slate-700 dark:bg-slate-800"
+                              >
+                                <div>
+                                  <span className="font-bold text-slate-900 dark:text-white">
+                                    {cand.nurseName}
+                                  </span>{' '}
+                                  <span className="text-slate-500 dark:text-slate-400">
+                                    — {cand.reasons.join(' · ')}
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleApplyReplacement(cand.nurseId, 'report')}
+                                    className="rounded-md bg-rose-600 px-2 py-0.5 text-[10px] font-semibold text-white hover:bg-rose-700"
+                                  >
+                                    Rapor Yap &amp; Ata
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleApplyReplacement(cand.nurseId, 'clear')}
+                                    className="rounded-md bg-indigo-600 px-2 py-0.5 text-[10px] font-semibold text-white hover:bg-indigo-700"
+                                  >
+                                    Boşalt &amp; Ata
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -781,6 +1342,11 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
                                 S
                               </span>
                             )}
+                            {roleInfo.role === 'gunduz_mesai' && (
+                              <span className="rounded bg-sky-100 px-1 text-[9px] font-bold text-sky-800 dark:bg-sky-900/60 dark:text-sky-200">
+                                G
+                              </span>
+                            )}
                             {roleInfo.role === 'pasif_izinli' && (
                               <span className="rounded bg-fuchsia-100 px-1 text-[9px] font-bold text-fuchsia-800 dark:bg-fuchsia-900/60 dark:text-fuchsia-200">
                                 P
@@ -800,9 +1366,26 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
                             swapSource?.nurseId === nurse.id && swapSource?.day === d;
                           const isPickerOpen =
                             activeCell?.nurseId === nurse.id && activeCell?.day === d;
+                          const isPinned = Boolean(lockedCells[nurse.id]?.includes(d));
 
                           const pref = preferences[nurse.id];
-                          const isPosDay = pref?.positiveNobetDays.includes(d);
+                          const isPosDay = Boolean(pref?.positiveNobetDays?.includes(d));
+                          const isPosMesaiDay = Boolean(pref?.positiveMesaiDays?.includes(d));
+                          const isNegDay = Boolean(pref?.negativeDays?.includes(d));
+                          const isSoftDay = Boolean(pref?.softNegativeDays?.includes(d));
+                          const isLeavePrefDay = Boolean(pref?.leaveDays?.[d]);
+
+                          const prefDotClass = isLeavePrefDay
+                            ? 'bg-purple-500'
+                            : isNegDay
+                            ? 'bg-rose-500'
+                            : isPosDay
+                            ? 'bg-emerald-500'
+                            : isPosMesaiDay
+                            ? 'bg-sky-500'
+                            : isSoftDay
+                            ? 'bg-amber-400'
+                            : '';
 
                           return (
                             <td
@@ -816,21 +1399,41 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
                                 disabled={!isAdmin}
                                 onClick={() => handleCellClick(nurse.id, d)}
                                 title={
-                                  cellIssues.length > 0
-                                    ? cellIssues.map((ci) => ci.message).join(' | ')
+                                  isAdmin
+                                    ? cellIssues.length > 0
+                                      ? cellIssues.map((ci) => ci.message).join(' | ')
+                                      : `${nurse.name} · ${d}. gün: ${meta.labelTR}${
+                                          isPosMesaiDay ? ' (08–16 Mesai tercihi)' : ''
+                                        }${isPinned ? ' · 📌 Sabitlenmiş' : ''}`
                                     : `${nurse.name} · ${d}. gün: ${meta.labelTR}`
                                 }
-                                className={`flex h-7 w-full items-center justify-center rounded text-[11px] transition ${
+                                className={`relative flex h-7 w-full items-center justify-center rounded text-[11px] transition ${
                                   meta.badgeClass
-                                } ${hasHard ? 'ring-2 ring-rose-500' : ''} ${
-                                  hasWarn ? 'ring-2 ring-amber-400' : ''
-                                } ${isSwapSrc ? 'ring-2 ring-sky-500 scale-105' : ''} ${
+                                } ${isAdmin && hasHard ? 'ring-2 ring-rose-500' : ''} ${
+                                  isAdmin && hasWarn ? 'ring-2 ring-amber-400' : ''
+                                } ${isAdmin && isPinned ? 'ring-1 ring-amber-500/80' : ''} ${
+                                  isSwapSrc ? 'ring-2 ring-sky-500 scale-105' : ''
+                                } ${
                                   isPickerOpen && !isSwapSrc ? 'ring-2 ring-indigo-500 scale-105' : ''
                                 } ${
-                                  isPosDay && code === 'N24' ? 'underline decoration-emerald-200' : ''
+                                  isAdmin && isPosDay && code === 'N24'
+                                    ? 'underline decoration-emerald-200'
+                                    : ''
+                                } ${
+                                  isAdmin && isPosMesaiDay && code === 'M8'
+                                    ? 'underline decoration-sky-400'
+                                    : ''
                                 }`}
                               >
                                 {meta.shortLabel}
+                                {isAdmin && showPrefOverlay && prefDotClass && (
+                                  <span
+                                    className={`no-print pointer-events-none absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full ${prefDotClass}`}
+                                  />
+                                )}
+                                {isAdmin && isPinned && (
+                                  <span className="no-print pointer-events-none absolute left-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-amber-500" />
+                                )}
                               </button>
                             </td>
                           );
@@ -898,7 +1501,11 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
                       );
                     })}
                     <td colSpan={3} className="border border-slate-300 px-2 py-1 text-center text-[10px] dark:border-slate-700">
-                      H.İçi 5K / H.Sonu 3K
+                      H.İçi{' '}
+                      {config.weekdayNobetCount +
+                        config.weekdayMesaiCount +
+                        (preflight.sorumluCount > 0 ? 1 : 0)}
+                      K / H.Sonu {config.weekendNobetCount + config.weekendMesaiCount}K
                     </td>
                   </tr>
                 </tbody>
@@ -923,7 +1530,8 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
                     <th className="px-2 py-2 text-center">Fazla Mesai</th>
                     <th className="px-2 py-2 text-center">H.Sonu/Tatil</th>
                     <th className="px-2 py-2 text-center">3 Gün Boşluk</th>
-                    <th className="px-2 py-2 text-center">İstek Uyumu</th>
+                    {isAdmin && <th className="px-2 py-2 text-center">İstek (🟢/🔵)</th>}
+                    {isAdmin && <th className="px-2 py-2 text-center">Kısıt (🔴/🟡)</th>}
                     <th className="px-2 py-2 text-center">3. Gün Mesai</th>
                   </tr>
                 </thead>
@@ -964,9 +1572,90 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
                           {m.threeDayGapCount}
                         </span>
                       </td>
-                      <td className="px-2 py-2 text-center">
-                        {m.positiveTotal > 0 ? `${m.positiveMatched}/${m.positiveTotal}` : '—'}
-                      </td>
+                      {isAdmin && (
+                        <td
+                          className="px-2 py-2 text-center"
+                          title={
+                            m.positiveTotal > 0
+                              ? [
+                                  m.positiveNobetTotal > 0
+                                    ? `🟢 Nöbet: ${m.positiveNobetMatched}/${m.positiveNobetTotal}`
+                                    : '',
+                                  m.positiveMesaiTotal > 0
+                                    ? `🔵 Mesai: ${m.positiveMesaiMatched}/${m.positiveMesaiTotal}`
+                                    : '',
+                                  m.unmatchedPositiveDays.length > 0
+                                    ? `Karşılanmayan günler: ${m.unmatchedPositiveDays.join(', ')}`
+                                    : 'Tüm pozitif istekler karşılandı',
+                                ]
+                                  .filter(Boolean)
+                                  .join(' · ')
+                              : 'Pozitif gün isteği yok'
+                          }
+                        >
+                          {m.positiveTotal > 0 ? (
+                            <span
+                              className={`font-semibold ${
+                                m.positiveMatched === m.positiveTotal
+                                  ? 'text-emerald-700 dark:text-emerald-300'
+                                  : 'text-slate-700 dark:text-slate-200'
+                              }`}
+                            >
+                              {m.positiveMatched}/{m.positiveTotal}
+                            </span>
+                          ) : (
+                            '—'
+                          )}
+                        </td>
+                      )}
+                      {isAdmin && (
+                        <td className="px-2 py-2 text-center">
+                          {m.negativeTotal === 0 && m.softNegativeTotal === 0 ? (
+                            '—'
+                          ) : (
+                            <div className="inline-flex flex-wrap items-center justify-center gap-1">
+                              {m.negativeTotal > 0 && (
+                                <span
+                                  title={
+                                    m.negativeViolations > 0
+                                      ? `Delinen 🔴 günler: ${m.violatedNegativeDays.join(', ')}`
+                                      : `Tüm 🔴 Çalışamam günleri (${m.negativeTotal}) korundu`
+                                  }
+                                  className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
+                                    m.negativeViolations > 0
+                                      ? 'bg-rose-100 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300'
+                                      : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300'
+                                  }`}
+                                >
+                                  🔴 {m.negativeViolations}/{m.negativeTotal}
+                                  {m.violatedNegativeDays.length > 0
+                                    ? ` (${m.violatedNegativeDays.join(',')}.g)`
+                                    : ''}
+                                </span>
+                              )}
+                              {m.softNegativeTotal > 0 && (
+                                <span
+                                  title={
+                                    m.softNegativeViolations > 0
+                                      ? `Vardiya düşen 🟡 günler: ${m.violatedSoftNegativeDays.join(', ')}`
+                                      : `Tüm 🟡 Mümkünse Boş günleri (${m.softNegativeTotal}) boş bırakıldı`
+                                  }
+                                  className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
+                                    m.softNegativeViolations > 0
+                                      ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300'
+                                      : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300'
+                                  }`}
+                                >
+                                  🟡 {m.softNegativeViolations}/{m.softNegativeTotal}
+                                  {m.violatedSoftNegativeDays.length > 0
+                                    ? ` (${m.violatedSoftNegativeDays.join(',')}.g)`
+                                    : ''}
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </td>
+                      )}
                       <td className="px-2 py-2 text-center">
                         {m.day3MesaiCount > 0 ? (
                           <span className="text-amber-600 font-semibold">{m.day3MesaiCount}</span>
@@ -981,8 +1670,8 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
             </div>
           </section>
 
-          {/* İhlal & Uyarı Detayları */}
-          {evaluation.issues.length > 0 && (
+          {/* İhlal & Uyarı Detayları (Yalnızca Sorumlu) */}
+          {isAdmin && evaluation.issues.length > 0 && (
             <section className="no-print rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
               <button
                 type="button"

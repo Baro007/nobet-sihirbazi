@@ -1,7 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  AlertTriangle,
   CalendarPlus,
   CheckCircle2,
+  Info,
   Lock,
   RotateCcw,
   Save,
@@ -32,7 +34,7 @@ import {
   PassiveReason,
 } from '../types/schedule';
 
-type BrushMode = 'positive' | 'negative' | 'softNegative' | 'leave';
+type BrushMode = 'positive' | 'positiveMesai' | 'negative' | 'softNegative' | 'leave';
 
 export interface RegisterAndSaveParams {
   existingNurseId?: string;
@@ -60,12 +62,26 @@ function makeEmptyPreference(yearMonth: string, nurseId: string): NursePreferenc
     yearMonth,
     nurseId,
     positiveNobetDays: [],
+    positiveMesaiDays: [],
     negativeDays: [],
     softNegativeDays: [],
     leaveDays: {},
     bridgeLeaveRequests: [],
     notes: '',
     updatedAt: '',
+  };
+}
+
+function normalizePreference(p: NursePreference): NursePreference {
+  return {
+    ...p,
+    positiveNobetDays: p.positiveNobetDays ?? [],
+    positiveMesaiDays: p.positiveMesaiDays ?? [],
+    negativeDays: p.negativeDays ?? [],
+    softNegativeDays: p.softNegativeDays ?? [],
+    leaveDays: p.leaveDays ?? {},
+    bridgeLeaveRequests: p.bridgeLeaveRequests ?? [],
+    notes: p.notes ?? '',
   };
 }
 
@@ -110,8 +126,13 @@ export const PreferenceView: React.FC<PreferenceViewProps> = ({
 
   const [draft, setDraft] = useState<NursePreference>(() =>
     selectedNurse && preferences[selectedNurse.id]
-      ? preferences[selectedNurse.id]
+      ? normalizePreference(preferences[selectedNurse.id])
       : makeEmptyPreference(config.yearMonth, selectedNurse?.id ?? '')
+  );
+  const [noteInput, setNoteInput] = useState<string>(() =>
+    isAdmin && selectedNurse && preferences[selectedNurse.id]
+      ? preferences[selectedNurse.id].notes ?? ''
+      : ''
   );
   const [brush, setBrush] = useState<BrushMode>('positive');
   const [leaveSubtype, setLeaveSubtype] = useState<LeaveCode>('YI');
@@ -123,40 +144,49 @@ export const PreferenceView: React.FC<PreferenceViewProps> = ({
   const [bridgeWithThu, setBridgeWithThu] = useState(true);
   const [saving, setSaving] = useState(false);
 
-  const prevSelectedRef = useRef<{ id: string; ym: string }>({
+  const prevSelectedRef = useRef<{ id: string; ym: string; admin: boolean }>({
     id: selectedNurseId,
     ym: config.yearMonth,
+    admin: isAdmin,
   });
 
-  // Seçili hemşire veya ay değiştiğinde taslak ve rol bilgilerini güncelle;
+  // Seçili hemşire, ay veya sorumlu oturumu değiştiğinde taslak ve rol bilgilerini güncelle;
   // ancak kullanıcı yeni bir isim yazarken dokunduğu günleri sıfırlama.
   useEffect(() => {
     const prev = prevSelectedRef.current;
     const ymChanged = prev.ym !== config.yearMonth;
     const idChanged = prev.id !== selectedNurseId;
+    const adminChanged = prev.admin !== isAdmin;
 
-    if (idChanged || ymChanged) {
-      prevSelectedRef.current = { id: selectedNurseId, ym: config.yearMonth };
-      setJustSavedName(null);
+    if (idChanged || ymChanged || adminChanged) {
+      prevSelectedRef.current = { id: selectedNurseId, ym: config.yearMonth, admin: isAdmin };
+      if (idChanged || ymChanged) setJustSavedName(null);
       if (selectedNurse) {
-        setNameInput(selectedNurse.name);
-        const nextBranch = selectedNurse.branch || 'HEM';
-        setBranchInput(nextBranch);
-        const eff = resolveEffectiveNurseRole(selectedNurse, config);
-        setRoleInput(eff.role);
-        setPassiveReasonInput(eff.passiveReason ?? 'DI');
-        if (eff.role !== 'nobetli' || nextBranch !== 'HEM') {
-          setShowRoleOptions(true);
+        if (idChanged || ymChanged) {
+          setNameInput(selectedNurse.name);
+          const nextBranch = selectedNurse.branch || 'HEM';
+          setBranchInput(nextBranch);
+          const eff = resolveEffectiveNurseRole(selectedNurse, config);
+          setRoleInput(eff.role);
+          setPassiveReasonInput(eff.passiveReason ?? 'DI');
+          if (eff.role !== 'nobetli' || nextBranch !== 'HEM') {
+            setShowRoleOptions(true);
+          }
+          setDraft(
+            preferences[selectedNurse.id]
+              ? normalizePreference(preferences[selectedNurse.id])
+              : makeEmptyPreference(config.yearMonth, selectedNurse.id)
+          );
         }
-        setDraft(
-          preferences[selectedNurse.id] ??
-            makeEmptyPreference(config.yearMonth, selectedNurse.id)
-        );
+        setNoteInput(isAdmin ? (preferences[selectedNurse.id]?.notes ?? '') : '');
       } else if (ymChanged) {
         setDraft(makeEmptyPreference(config.yearMonth, ''));
+        setNoteInput('');
+      } else if (adminChanged && !isAdmin) {
+        setNoteInput('');
       }
     }
-  }, [selectedNurseId, selectedNurse, config, preferences]);
+  }, [selectedNurseId, selectedNurse, config, preferences, isAdmin]);
 
   useEffect(() => {
     const mondays = getMondaysInMonth(config.yearMonth);
@@ -184,19 +214,21 @@ export const PreferenceView: React.FC<PreferenceViewProps> = ({
 
   const crowdByDay = useMemo(() => {
     const posCounts: Record<number, number> = {};
+    const posMesaiCounts: Record<number, number> = {};
     const negCounts: Record<number, number> = {};
     for (const n of activeWorkingNurses) {
       if (n.id === effectiveId) continue;
       const p = preferences[n.id];
       if (!p) continue;
-      for (const d of p.positiveNobetDays) posCounts[d] = (posCounts[d] ?? 0) + 1;
-      for (const d of p.negativeDays) negCounts[d] = (negCounts[d] ?? 0) + 1;
-      for (const dStr of Object.keys(p.leaveDays)) {
+      for (const d of p.positiveNobetDays ?? []) posCounts[d] = (posCounts[d] ?? 0) + 1;
+      for (const d of p.positiveMesaiDays ?? []) posMesaiCounts[d] = (posMesaiCounts[d] ?? 0) + 1;
+      for (const d of p.negativeDays ?? []) negCounts[d] = (negCounts[d] ?? 0) + 1;
+      for (const dStr of Object.keys(p.leaveDays ?? {})) {
         const d = Number(dStr);
         negCounts[d] = (negCounts[d] ?? 0) + 1;
       }
     }
-    return { posCounts, negCounts };
+    return { posCounts, posMesaiCounts, negCounts };
   }, [activeWorkingNurses, preferences, effectiveId]);
 
   const isLockedForUser = config.preferencesLocked && !isAdmin;
@@ -215,7 +247,7 @@ export const PreferenceView: React.FC<PreferenceViewProps> = ({
       if (exact.id !== selectedNurseId) onSelectNurseId(exact.id);
     } else if (selectedNurseId) {
       // Mevcut seçimi bırak ama kullanıcının takvimde tıklamış olduğu taslağı koru
-      prevSelectedRef.current = { id: '', ym: config.yearMonth };
+      prevSelectedRef.current = { id: '', ym: config.yearMonth, admin: isAdmin };
       onSelectNurseId('');
     }
   };
@@ -232,9 +264,10 @@ export const PreferenceView: React.FC<PreferenceViewProps> = ({
     setBranchInput('HEM');
     setRoleInput('nobetli');
     setPassiveReasonInput('DI');
-    prevSelectedRef.current = { id: '', ym: config.yearMonth };
+    prevSelectedRef.current = { id: '', ym: config.yearMonth, admin: isAdmin };
     setShowRoleOptions(false);
     setJustSavedName(null);
+    setNoteInput('');
     onSelectNurseId('');
     setDraft(makeEmptyPreference(config.yearMonth, ''));
   };
@@ -245,23 +278,27 @@ export const PreferenceView: React.FC<PreferenceViewProps> = ({
 
     setDraft((prev) => {
       const nextPos = new Set(prev.positiveNobetDays);
+      const nextPosMesai = new Set(prev.positiveMesaiDays ?? []);
       const nextNeg = new Set(prev.negativeDays);
       const nextSoft = new Set(prev.softNegativeDays);
       const nextLeave = { ...prev.leaveDays };
 
       const alreadySame =
         (brush === 'positive' && nextPos.has(day)) ||
+        (brush === 'positiveMesai' && nextPosMesai.has(day)) ||
         (brush === 'negative' && nextNeg.has(day)) ||
         (brush === 'softNegative' && nextSoft.has(day)) ||
         (brush === 'leave' && nextLeave[day] === leaveSubtype);
 
       nextPos.delete(day);
+      nextPosMesai.delete(day);
       nextNeg.delete(day);
       nextSoft.delete(day);
       delete nextLeave[day];
 
       if (!alreadySame) {
         if (brush === 'positive') nextPos.add(day);
+        else if (brush === 'positiveMesai') nextPosMesai.add(day);
         else if (brush === 'negative') nextNeg.add(day);
         else if (brush === 'softNegative') nextSoft.add(day);
         else if (brush === 'leave') nextLeave[day] = leaveSubtype;
@@ -270,6 +307,7 @@ export const PreferenceView: React.FC<PreferenceViewProps> = ({
       return {
         ...prev,
         positiveNobetDays: Array.from(nextPos).sort((a, b) => a - b),
+        positiveMesaiDays: Array.from(nextPosMesai).sort((a, b) => a - b),
         negativeDays: Array.from(nextNeg).sort((a, b) => a - b),
         softNegativeDays: Array.from(nextSoft).sort((a, b) => a - b),
         leaveDays: nextLeave,
@@ -282,12 +320,14 @@ export const PreferenceView: React.FC<PreferenceViewProps> = ({
     const plan = buildFiveDayBridgeLeave(config.yearMonth, bridgeMonday, bridgeWithThu);
     setDraft((prev) => {
       const nextPos = new Set(prev.positiveNobetDays);
+      const nextPosMesai = new Set(prev.positiveMesaiDays ?? []);
       const nextNeg = new Set(prev.negativeDays);
       const nextSoft = new Set(prev.softNegativeDays);
       const nextLeave = { ...prev.leaveDays };
 
       for (const d of plan.leaveDays) {
         nextPos.delete(d);
+        nextPosMesai.delete(d);
         nextNeg.delete(d);
         nextSoft.delete(d);
         nextLeave[d] = 'YI';
@@ -295,11 +335,13 @@ export const PreferenceView: React.FC<PreferenceViewProps> = ({
       for (const d of plan.negativeDays) {
         if (!nextLeave[d]) {
           nextPos.delete(d);
+          nextPosMesai.delete(d);
           nextSoft.delete(d);
           nextNeg.add(daySafe(d));
         }
       }
       if (plan.preThursdayDay && !nextLeave[plan.preThursdayDay]) {
+        nextPosMesai.delete(plan.preThursdayDay);
         nextNeg.delete(plan.preThursdayDay);
         nextSoft.delete(plan.preThursdayDay);
         nextPos.add(plan.preThursdayDay);
@@ -308,6 +350,7 @@ export const PreferenceView: React.FC<PreferenceViewProps> = ({
       return {
         ...prev,
         positiveNobetDays: Array.from(nextPos).sort((a, b) => a - b),
+        positiveMesaiDays: Array.from(nextPosMesai).sort((a, b) => a - b),
         negativeDays: Array.from(nextNeg).sort((a, b) => a - b),
         softNegativeDays: Array.from(nextSoft).sort((a, b) => a - b),
         leaveDays: nextLeave,
@@ -326,8 +369,22 @@ export const PreferenceView: React.FC<PreferenceViewProps> = ({
 
   const handleResetDraft = () => {
     if (isLockedForUser) return;
+    const hasAnyMarked =
+      draft.positiveNobetDays.length > 0 ||
+      (draft.positiveMesaiDays ?? []).length > 0 ||
+      draft.negativeDays.length > 0 ||
+      draft.softNegativeDays.length > 0 ||
+      Object.keys(draft.leaveDays).length > 0 ||
+      noteInput.trim().length > 0;
+    if (hasAnyMarked && !window.confirm('Seçili takvim işaretleri temizlenecek. Emin misiniz?')) {
+      return;
+    }
     setDraft(makeEmptyPreference(config.yearMonth, effectiveId));
+    setNoteInput('');
   };
+
+  const savedPref = effectiveId ? preferences[effectiveId] : undefined;
+  const hasSavedHiddenNote = !isAdmin && Boolean(savedPref?.notes?.trim());
 
   const handleSave = async () => {
     if (isLockedForUser) return;
@@ -340,6 +397,7 @@ export const PreferenceView: React.FC<PreferenceViewProps> = ({
     setSaving(true);
     setNameError('');
     try {
+      const finalNotes = isAdmin ? noteInput.trim() : noteInput.trim() || savedPref?.notes || '';
       const savedId = await onRegisterAndSavePreference({
         existingNurseId: effectiveId || undefined,
         name: cleanName,
@@ -349,15 +407,19 @@ export const PreferenceView: React.FC<PreferenceViewProps> = ({
         pref: {
           yearMonth: config.yearMonth,
           positiveNobetDays: draft.positiveNobetDays,
+          positiveMesaiDays: draft.positiveMesaiDays ?? [],
           negativeDays: draft.negativeDays,
           softNegativeDays: draft.softNegativeDays,
           leaveDays: draft.leaveDays,
           bridgeLeaveRequests: draft.bridgeLeaveRequests,
-          notes: draft.notes,
+          notes: finalNotes,
           updatedAt: new Date().toISOString(),
         },
       });
-      prevSelectedRef.current = { id: savedId, ym: config.yearMonth };
+      prevSelectedRef.current = { id: savedId, ym: config.yearMonth, admin: isAdmin };
+      if (!isAdmin) {
+        setNoteInput('');
+      }
       setJustSavedName(cleanName);
     } finally {
       setSaving(false);
@@ -378,7 +440,96 @@ export const PreferenceView: React.FC<PreferenceViewProps> = ({
   }, [config.yearMonth, bridgeMonday, bridgeWithThu]);
 
   const isNewPerson = nameInput.trim().length >= 2 && !exactMatchNurse && !selectedNurse;
+  const similarNurses = useMemo(() => {
+    if (!isNewPerson) return [];
+    const firstToken = foldedQuery.split(' ')[0] ?? '';
+    if (firstToken.length < 3) return [];
+    return sortedNurses
+      .filter((n) => {
+        const nf = foldTurkishSearch(n.name);
+        return nf.split(' ')[0] === firstToken || nf.includes(firstToken);
+      })
+      .slice(0, 4);
+  }, [isNewPerson, foldedQuery, sortedNurses]);
   const displayName = selectedNurse?.name ?? (nameInput.trim() || 'Adınızı Girin');
+  const trimmedName = nameInput.trim();
+  const isSingleWordNewName = isNewPerson && !trimmedName.includes(' ');
+  const isFixedDaytimeRole = roleInput === 'sorumlu' || roleInput === 'gunduz_mesai';
+
+  const draftWarnings = useMemo(() => {
+    const warns: string[] = [];
+    if (isFixedDaytimeRole) {
+      if (draft.negativeDays.length > 0) {
+        warns.push(
+          'Seçili görevinizde (Sorumlu / Gündüzcü) hafta içi 08–16 mesai otomatiktir; 🔴 Çalışamam günleri mesaiyi kaldırmaz. İzinli olacağınız günleri lütfen 🟣 İzin (Yİ/R/İİ) ile işaretleyin.'
+        );
+      }
+      return warns;
+    }
+
+    if (roleInput === 'nobetli') {
+      const sortedPos = [...draft.positiveNobetDays].sort((a, b) => a - b);
+      let pairCount = 0;
+      for (let i = 0; i + 1 < sortedPos.length && pairCount < 3; i++) {
+        if (sortedPos[i + 1] - sortedPos[i] <= 2) {
+          warns.push(
+            `${sortedPos[i]} ve ${sortedPos[i + 1]}. günlerin ikisini birden 🟢 Nöbet seçtiniz (nöbet sonrası 2 gün dinlenme gerektiği için ikisine birden nöbet yazılamaz).`
+          );
+          pairCount++;
+        }
+      }
+
+      const posMesaiSet = new Set(draft.positiveMesaiDays ?? []);
+      let nextMesaiCount = 0;
+      for (let i = 0; i < sortedPos.length && nextMesaiCount < 3; i++) {
+        const d = sortedPos[i];
+        if (posMesaiSet.has(d + 1)) {
+          warns.push(
+            `${d}. gün 🟢 Nöbet tutup ertesi gün (${d + 1}. gün) 🔵 Mesai tutulamaz (nöbet çıkışı zorunlu dinlenme günüdür).`
+          );
+          nextMesaiCount++;
+        }
+      }
+
+      const blueLen = (draft.positiveMesaiDays ?? []).length;
+      if (blueLen > 6) {
+        warns.push(
+          `Çok fazla günü (${blueLen} gün) 🔵 Mesai İstiyorum işaretlediniz. Boş bıraktığınız günleri sistem zaten adil şekilde dağıtır; mavi işareti yalnızca gece 24s nöbete kalamayacağınız günler için kullanın.`
+        );
+      }
+
+      if (draft.positiveNobetDays.length > 8) {
+        warns.push(
+          `${draft.positiveNobetDays.length} gün 🟢 Nöbet İstiyorum işaretlediniz. Bir ayda kişi başı ortalama 6–8 nöbet düşer; tüm nöbet günlerinizi tek tek seçmenize gerek yok.`
+        );
+      }
+
+      if (draft.negativeDays.length > 8) {
+        warns.push(
+          `${draft.negativeDays.length} gün 🔴 Çalışamam işaretlediniz. Nöbet çıkış/dinlenme günlerini işaretlemenize gerek yoktur (sistem otomatik boş bırakır); fazla kırmızı gün kadroyu sıkıştırabilir.`
+        );
+      }
+
+      const totalMarkedPrefs =
+        draft.positiveNobetDays.length +
+        blueLen +
+        draft.negativeDays.length +
+        draft.softNegativeDays.length;
+      if (totalMarkedPrefs >= 14) {
+        warns.push(
+          `Toplam ${totalMarkedPrefs} gün tercih işaretlediniz. Her gün için tercih yapmanıza gerek yok; yalnızca gerçekten önemli günleri seçip kalan günleri boş bırakmanız daha adil bir çizelge üretilmesini sağlar.`
+        );
+      }
+    }
+    return warns;
+  }, [
+    isFixedDaytimeRole,
+    roleInput,
+    draft.negativeDays,
+    draft.positiveNobetDays,
+    draft.positiveMesaiDays,
+    draft.softNegativeDays,
+  ]);
 
   return (
     <div className="space-y-4 sm:space-y-6">
@@ -470,7 +621,7 @@ export const PreferenceView: React.FC<PreferenceViewProps> = ({
             >
               {showRoleOptions
                 ? 'Görev / branş ayarını gizle'
-                : 'Sorumlu / Doğum İzni / Ebe iseniz buradan seçin'}
+                : 'Sorumlu / Gündüzcü / Doğum İzni / Ebe iseniz buradan seçin'}
             </button>
           </div>
 
@@ -485,6 +636,7 @@ export const PreferenceView: React.FC<PreferenceViewProps> = ({
               >
                 <option value="nobetli">Nöbetli Hemşire / Ebe</option>
                 <option value="sorumlu">Birim Sorumlusu</option>
+                <option value="gunduz_mesai">Gündüzcü (Gece Muaf — Sadece 08–16)</option>
                 <option value="pasif_izinli">Doğum İzni / Uzun Rapor</option>
               </select>
 
@@ -518,13 +670,38 @@ export const PreferenceView: React.FC<PreferenceViewProps> = ({
         {nameError && <p className="mt-2 text-xs font-semibold text-rose-600">{nameError}</p>}
 
         {isNewPerson && (
-          <div className="mt-3 flex items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50/80 px-3 py-2 text-xs text-indigo-900 dark:border-indigo-800 dark:bg-indigo-950/40 dark:text-indigo-200">
-            <UserPlus className="h-4 w-4 shrink-0 text-indigo-600 dark:text-indigo-400" />
-            <span>
-              <strong>Yeni kayıt: &ldquo;{nameInput.trim()}&rdquo;</strong> — aşağıdan
-              tercihlerinizi işaretleyip kaydettiğinizde otomatik olarak bu ayın listesine
-              ekleneceksiniz.
-            </span>
+          <div className="mt-3 space-y-2 rounded-xl border border-indigo-200 bg-indigo-50/80 px-3 py-2.5 text-xs text-indigo-900 dark:border-indigo-800 dark:bg-indigo-950/40 dark:text-indigo-200">
+            <div className="flex items-center gap-2">
+              <UserPlus className="h-4 w-4 shrink-0 text-indigo-600 dark:text-indigo-400" />
+              <span>
+                <strong>Yeni kayıt: &ldquo;{trimmedName}&rdquo;</strong> — aşağıdan
+                tercihlerinizi işaretleyip kaydettiğinizde otomatik olarak bu ayın listesine
+                ekleneceksiniz.
+              </span>
+            </div>
+            {isSingleWordNewName && (
+              <p className="text-[11px] font-medium text-amber-800 dark:text-amber-300">
+                💡 Adaş karışıklığını önlemek için Ad ve Soyadı birlikte yazmanız önerilir (örn:
+                Ayşe Kaya).
+              </p>
+            )}
+            {similarNurses.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5 border-t border-indigo-200/70 pt-2 dark:border-indigo-800/70">
+                <span className="text-[11px] font-semibold">
+                  Benzer kayıt bulundu — sizseniz yeni kayıt açmak yerine seçin:
+                </span>
+                {similarNurses.map((sn) => (
+                  <button
+                    key={sn.id}
+                    type="button"
+                    onClick={() => handlePickNurseChip(sn)}
+                    className="rounded-lg border border-indigo-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-indigo-800 hover:bg-indigo-100 dark:border-indigo-700 dark:bg-slate-800 dark:text-indigo-200"
+                  >
+                    {sn.name}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
@@ -556,6 +733,8 @@ export const PreferenceView: React.FC<PreferenceViewProps> = ({
                       {nurse.name}
                       {roleInfo.role === 'sorumlu'
                         ? ' (S)'
+                        : roleInfo.role === 'gunduz_mesai'
+                        ? ' (G)'
                         : roleInfo.role === 'pasif_izinli'
                         ? ' (İzin)'
                         : ''}
@@ -661,6 +840,27 @@ export const PreferenceView: React.FC<PreferenceViewProps> = ({
           </div>
         )}
 
+        {/* Sabit Gündüz Rolü veya Nöbetli Rol Bilgi Notu */}
+        {isFixedDaytimeRole ? (
+          <div className="mb-3 flex items-start gap-2 rounded-xl border border-sky-200 bg-sky-50/80 px-3 py-2 text-xs text-sky-900 dark:border-sky-800 dark:bg-sky-950/30 dark:text-sky-200">
+            <Info className="mt-0.5 h-4 w-4 shrink-0 text-sky-600 dark:text-sky-400" />
+            <span>
+              <strong>{roleInput === 'sorumlu' ? 'Birim Sorumlusu' : 'Gündüzcü (08–16)'}</strong>{' '}
+              rolünde hafta içi 08–16 çalışma otomatik atanır ve gece nöbeti yazılmaz. Çalışmayacağınız
+              günleri yalnızca <strong>🟣 İzin (Yİ/R/İİ)</strong> fırçasıyla işaretleyin.
+            </span>
+          </div>
+        ) : (
+          <div className="mb-3 flex items-start gap-2 rounded-xl border border-indigo-200 bg-indigo-50/70 px-3 py-2 text-xs text-indigo-900 dark:border-indigo-800 dark:bg-indigo-950/30 dark:text-indigo-200">
+            <Info className="mt-0.5 h-4 w-4 shrink-0 text-indigo-600 dark:text-indigo-400" />
+            <span>
+              <strong>Her günü işaretlemenize gerek yok:</strong> Yalnızca özel isteğiniz veya
+              mazeretiniz olan günleri işaretleyin; boş bıraktığınız günleri sistem adil şekilde
+              otomatik dağıtır.
+            </span>
+          </div>
+        )}
+
         {/* Mod Fırçaları */}
         <div className="mb-4 space-y-2">
           <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
@@ -674,6 +874,17 @@ export const PreferenceView: React.FC<PreferenceViewProps> = ({
               }`}
             >
               🟢 Nöbet İstiyorum ({draft.positiveNobetDays.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setBrush('positiveMesai')}
+              className={`rounded-xl border px-3 py-2.5 text-xs font-semibold transition ${
+                brush === 'positiveMesai'
+                  ? 'border-sky-600 bg-sky-600 text-white shadow-sm'
+                  : 'border-sky-200 bg-sky-50 text-sky-800 hover:bg-sky-100 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-300'
+              }`}
+            >
+              🔵 Mesai İstiyorum ({(draft.positiveMesaiDays ?? []).length})
             </button>
             <button
               type="button"
@@ -697,7 +908,7 @@ export const PreferenceView: React.FC<PreferenceViewProps> = ({
             >
               🟡 Mümkünse Boş ({draft.softNegativeDays.length})
             </button>
-            <div className="flex items-center gap-1">
+            <div className="col-span-2 flex items-center gap-1 sm:col-span-1">
               <button
                 type="button"
                 onClick={() => setBrush('leave')}
@@ -725,13 +936,15 @@ export const PreferenceView: React.FC<PreferenceViewProps> = ({
 
           <p className="text-[11px] font-medium text-slate-600 dark:text-slate-300">
             {brush === 'positive' &&
-              '🟢 Yeşil mod seçili: Nöbet tutmak istediğiniz günlere dokunun. Silmek için aynı güne tekrar dokunun.'}
+              '🟢 Yeşil mod seçili: Yalnızca özellikle 24 saat nöbet tutmak istediğiniz günlere dokunun — her günü işaretlemenize gerek yok, boş günleri sistem adil dağıtır. (Silmek için tekrar dokunun.)'}
+            {brush === 'positiveMesai' &&
+              '🔵 Mavi mod seçili: Yalnızca gündüz 08–16 mesai tutmak istediğiniz (gece 24s kalamayacağınız) günlere dokunun — her günü işaretlemenize gerek yok, boş günleri sistem adil dağıtır.'}
             {brush === 'negative' &&
-              '🔴 Kırmızı mod seçili: Kesinlikle çalışamayacağınız günlere dokunun. Silmek için aynı güne tekrar dokunun.'}
+              '🔴 Kırmızı mod seçili: Yalnızca kesinlikle çalışamayacağınız günlere dokunun — nöbet çıkış/dinlenme günlerini işaretlemenize gerek yok, sistem otomatik boş bırakır.'}
             {brush === 'softNegative' &&
-              '🟡 Sarı mod seçili: Mümkünse boş kalmasını istediğiniz günlere dokunun.'}
+              '🟡 Sarı mod seçili: Yalnızca mümkünse boş kalmasını istediğiniz birkaç güne dokunun — her günü işaretlemenize gerek yok.'}
             {brush === 'leave' &&
-              `🟣 Mor mod seçili (${leaveSubtype === 'YI' ? 'Yıllık İzin' : leaveSubtype === 'R' ? 'Rapor' : 'İdari İzin'}): İzinli olduğunuz günlere dokunun.`}
+              `🟣 Mor mod seçili (${leaveSubtype === 'YI' ? 'Yıllık İzin' : leaveSubtype === 'R' ? 'Rapor' : 'İdari İzin'}): Yalnızca resmî izinli olduğunuz günlere dokunun — diğer günleri boş bırakabilirsiniz.`}
           </p>
         </div>
 
@@ -755,6 +968,7 @@ export const PreferenceView: React.FC<PreferenceViewProps> = ({
 
           {Array.from({ length: daysInMonth }, (_, i) => i + 1).map((day) => {
             const isPos = draft.positiveNobetDays.includes(day);
+            const isPosMesai = (draft.positiveMesaiDays ?? []).includes(day);
             const isNeg = draft.negativeDays.includes(day);
             const isSoft = draft.softNegativeDays.includes(day);
             const leave = draft.leaveDays[day];
@@ -762,6 +976,7 @@ export const PreferenceView: React.FC<PreferenceViewProps> = ({
             const isHolOrWknd = isHolidayOrWeekend(day, config.yearMonth, config.holidays);
             const dow = getDayOfWeek(config.yearMonth, day);
             const otherPos = crowdByDay.posCounts[day] ?? 0;
+            const otherPosMesai = crowdByDay.posMesaiCounts[day] ?? 0;
             const otherNeg = crowdByDay.negCounts[day] ?? 0;
 
             let cellStyle =
@@ -773,6 +988,9 @@ export const PreferenceView: React.FC<PreferenceViewProps> = ({
             if (isPos) {
               cellStyle =
                 'border-emerald-500 bg-emerald-50 text-emerald-950 ring-1 ring-emerald-400 dark:bg-emerald-950/60 dark:text-emerald-100';
+            } else if (isPosMesai) {
+              cellStyle =
+                'border-sky-500 bg-sky-50 text-sky-950 ring-1 ring-sky-400 dark:bg-sky-950/60 dark:text-sky-100';
             } else if (isNeg) {
               cellStyle =
                 'border-rose-500 bg-rose-50 text-rose-950 ring-1 ring-rose-400 dark:bg-rose-950/60 dark:text-rose-100';
@@ -801,9 +1019,17 @@ export const PreferenceView: React.FC<PreferenceViewProps> = ({
                     {otherPos > 0 && (
                       <span
                         title={`${otherPos} arkadaşınız da bu gün nöbet istiyor`}
-                        className="rounded bg-blue-100 px-1 text-[9px] font-bold text-blue-700 dark:bg-blue-900/70 dark:text-blue-200"
+                        className="rounded bg-emerald-100 px-1 text-[9px] font-bold text-emerald-700 dark:bg-emerald-900/70 dark:text-emerald-200"
                       >
                         +{otherPos}
+                      </span>
+                    )}
+                    {otherPosMesai > 0 && (
+                      <span
+                        title={`${otherPosMesai} arkadaşınız da bu gün 08–16 mesai istiyor`}
+                        className="rounded bg-sky-100 px-1 text-[9px] font-bold text-sky-700 dark:bg-sky-900/70 dark:text-sky-200"
+                      >
+                        M+{otherPosMesai}
                       </span>
                     )}
                     {otherNeg >= 3 && (
@@ -830,6 +1056,12 @@ export const PreferenceView: React.FC<PreferenceViewProps> = ({
                         <span className="hidden sm:inline">🟢 Nöbet</span>
                       </>
                     )}
+                    {isPosMesai && (
+                      <>
+                        <span className="sm:hidden">🔵</span>
+                        <span className="hidden sm:inline">🔵 Mesai</span>
+                      </>
+                    )}
                     {isNeg && (
                       <>
                         <span className="sm:hidden">🔴</span>
@@ -852,23 +1084,50 @@ export const PreferenceView: React.FC<PreferenceViewProps> = ({
           })}
         </div>
 
+        {/* Anlık Tercih Çelişki Uyarıları */}
+        {draftWarnings.length > 0 && (
+          <div className="mt-4 rounded-xl border border-amber-300 bg-amber-50/90 px-3.5 py-2.5 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
+            <div className="mb-1 flex items-center gap-1.5 font-bold">
+              <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+              Takvim Tercih Uyarısı
+            </div>
+            <ul className="list-disc space-y-0.5 pl-5 text-[11px]">
+              {draftWarnings.map((w, idx) => (
+                <li key={idx}>{w}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+
         {/* Özel Not & Kaydet */}
         <div className="mt-5 grid gap-3 sm:grid-cols-[1fr_auto]">
           <div>
             <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">
-              Sorumlu Hemşireye Not / Açıklama (İsteğe bağlı)
+              {isAdmin
+                ? 'Sorumlu Hemşire Notu (Sadece sorumlu görür)'
+                : 'Sorumlu Hemşireye Gizli Not (Sadece sorumlu okuyabilir — İsteğe bağlı)'}
             </label>
             <input
               type="text"
               disabled={isLockedForUser}
-              value={draft.notes}
+              value={noteInput}
               onChange={(e) => {
                 setJustSavedName(null);
-                setDraft((p) => ({ ...p, notes: e.target.value }));
+                setNoteInput(e.target.value);
               }}
-              placeholder="Örn: Eşimle aynı gün nöbetçi olmak istiyorum / Çocuk bakımı..."
+              placeholder={
+                isAdmin
+                  ? 'Personelin özel notu...'
+                  : 'Örn: Eşimle aynı gün nöbet / Çocuk bakımı (kaydedilince gizlenir)...'
+              }
               className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-indigo-500 focus:outline-none disabled:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
             />
+            {hasSavedHiddenNote && (
+              <p className="mt-1.5 rounded-lg border border-emerald-200 bg-emerald-50/70 px-2.5 py-1 text-[11px] font-medium text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-200">
+                🔒 Sorumlu hemşireye kayıtlı özel notunuz var (gizlilik için ekranda gösterilmez).
+                Boş bırakırsanız eski notunuz korunur; yeni not yazarsanız güncellenir.
+              </p>
+            )}
           </div>
 
           <div className="flex flex-col-reverse items-stretch gap-2 sm:flex-row sm:items-end">
@@ -886,7 +1145,12 @@ export const PreferenceView: React.FC<PreferenceViewProps> = ({
               onClick={handleSave}
               className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 px-6 py-3 text-sm font-bold text-white shadow-sm hover:bg-indigo-700 disabled:opacity-50 sm:w-auto"
             >
-              <Save className="h-4 w-4" /> {saving ? 'Kaydediliyor...' : 'Tercihleri Kaydet'}
+              <Save className="h-4 w-4" />{' '}
+              {saving
+                ? 'Kaydediliyor...'
+                : trimmedName.length >= 2
+                ? `${trimmedName} İçin Kaydet`
+                : 'Tercihleri Kaydet'}
             </button>
           </div>
         </div>

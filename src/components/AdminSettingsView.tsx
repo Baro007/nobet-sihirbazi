@@ -1,8 +1,11 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowDownToLine,
   CalendarOff,
   Download,
+  GitMerge,
+  Handshake,
+  Pin,
   Plus,
   RotateCcw,
   ShieldAlert,
@@ -19,6 +22,7 @@ import {
   getPrevYearMonth,
   getTurkishHolidaysForYear,
   parseYearMonth,
+  toTurkishTitleCase,
   TURKISH_MONTHS,
 } from '../lib/calendar';
 import { resolveEffectiveNurseRole } from '../solver/validator';
@@ -28,6 +32,7 @@ import {
   Nurse,
   NursePreference,
   NurseRole,
+  PairRule,
   PassiveReason,
   ShiftCode,
 } from '../types/schedule';
@@ -38,9 +43,12 @@ interface AdminSettingsViewProps {
   preferences: Record<string, NursePreference>;
   localTcMap: Record<string, string>;
   hasPrevMonthSchedule: boolean;
+  activeDefaultYearMonth: string;
+  onSetActiveDefaultYearMonth: (ym: string) => Promise<void>;
   onUpdateConfig: (next: MonthConfig) => Promise<void>;
   onUpdateNurses: (next: Nurse[]) => Promise<void>;
   onDeleteNurse: (nurseId: string) => Promise<void>;
+  onMergeNurses: (sourceId: string, targetId: string) => Promise<void>;
   onUpdateLocalTc: (nurseId: string, tcNo: string) => void;
   onPullPrevMonthTail: () => Promise<void>;
   onExportBackup: () => void;
@@ -55,9 +63,12 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
   preferences,
   localTcMap,
   hasPrevMonthSchedule,
+  activeDefaultYearMonth,
+  onSetActiveDefaultYearMonth,
   onUpdateConfig,
   onUpdateNurses,
   onDeleteNurse,
+  onMergeNurses,
   onUpdateLocalTc,
   onPullPrevMonthTail,
   onExportBackup,
@@ -70,12 +81,31 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
   const [newRole, setNewRole] = useState<NurseRole>('nobetli');
   const [bulkText, setBulkText] = useState('');
   const [showBulkBox, setShowBulkBox] = useState(false);
+  const [showMergeBox, setShowMergeBox] = useState(false);
+  const [mergeSourceId, setMergeSourceId] = useState('');
+  const [mergeTargetId, setMergeTargetId] = useState('');
+
+  const [nameDrafts, setNameDrafts] = useState<Record<string, string>>({});
+  const [branchDrafts, setBranchDrafts] = useState<Record<string, string>>({});
+  const [clinicDraft, setClinicDraft] = useState(config.clinicName);
+  const [hospitalDraft, setHospitalDraft] = useState(config.hospitalName);
+  const [deadlineDraft, setDeadlineDraft] = useState(config.preferenceDeadline ?? '');
+
+  const [pairAId, setPairAId] = useState('');
+  const [pairBId, setPairBId] = useState('');
+  const [pairType, setPairType] = useState<PairRule['type']>('separate');
 
   const [holDay, setHolDay] = useState<number>(1);
   const [holName, setHolName] = useState('');
   const [holType, setHolType] = useState<HolidayEntry['type']>('resmi');
 
   const backupInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    setClinicDraft(config.clinicName);
+    setHospitalDraft(config.hospitalName);
+    setDeadlineDraft(config.preferenceDeadline ?? '');
+  }, [config.yearMonth, config.clinicName, config.hospitalName, config.preferenceDeadline]);
 
   const orderedNurses = useMemo(
     () => [...nurses].sort((a, b) => a.sortOrder - b.sortOrder),
@@ -92,7 +122,7 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
 
   const handleAddSingleNurse = async (e: React.FormEvent) => {
     e.preventDefault();
-    const trimmed = newName.trim();
+    const trimmed = toTurkishTitleCase(newName);
     if (!trimmed) return;
     const maxOrder = nurses.reduce((m, n) => Math.max(m, n.sortOrder), 0);
     const added: Nurse = {
@@ -119,11 +149,12 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
     const created: Nurse[] = lines.map((line, i) => {
       // İsteğe bağlı "Ad Soyad, EBE, Sorumlu" biçimini destekle
       const parts = line.split(/[,\t;]/).map((p) => p.trim());
-      const name = parts[0];
+      const name = toTurkishTitleCase(parts[0]);
       const branch = parts[1] ? parts[1].toLocaleUpperCase('tr-TR') : 'HEM';
       const roleToken = (parts[2] ?? '').toLocaleLowerCase('tr-TR');
       let role: NurseRole = 'nobetli';
       if (roleToken.includes('sorumlu')) role = 'sorumlu';
+      else if (roleToken.includes('gündüz') || roleToken.includes('gunduz')) role = 'gunduz_mesai';
       else if (roleToken.includes('pasif') || roleToken.includes('doğum') || roleToken.includes('izin')) {
         role = 'pasif_izinli';
       }
@@ -142,6 +173,58 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
     await onUpdateNurses([...nurses, ...created]);
     setBulkText('');
     setShowBulkBox(false);
+  };
+
+  const commitNurseNameDraft = (nurse: Nurse) => {
+    const draftVal = nameDrafts[nurse.id];
+    if (draftVal === undefined) return;
+    const cleaned = draftVal.trim();
+    setNameDrafts((prev) => {
+      const next = { ...prev };
+      delete next[nurse.id];
+      return next;
+    });
+    if (!cleaned || cleaned === nurse.name) return;
+    void onUpdateNurses(nurses.map((n) => (n.id === nurse.id ? { ...n, name: cleaned } : n)));
+  };
+
+  const commitNurseBranchDraft = (nurse: Nurse) => {
+    const draftVal = branchDrafts[nurse.id];
+    if (draftVal === undefined) return;
+    const cleaned = draftVal.trim().toLocaleUpperCase('tr-TR') || 'HEM';
+    setBranchDrafts((prev) => {
+      const next = { ...prev };
+      delete next[nurse.id];
+      return next;
+    });
+    if (cleaned === nurse.branch) return;
+    void onUpdateNurses(nurses.map((n) => (n.id === nurse.id ? { ...n, branch: cleaned } : n)));
+  };
+
+  const handleAddPairRule = async () => {
+    if (!pairAId || !pairBId || pairAId === pairBId) return;
+    const existing = config.pairRules ?? [];
+    const duplicate = existing.some(
+      (r) =>
+        r.type === pairType &&
+        ((r.nurseAId === pairAId && r.nurseBId === pairBId) ||
+          (r.nurseAId === pairBId && r.nurseBId === pairAId))
+    );
+    if (duplicate) return;
+    const nextRule: PairRule = {
+      id: `pair-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
+      nurseAId: pairAId,
+      nurseBId: pairBId,
+      type: pairType,
+    };
+    await onUpdateConfig({ ...config, pairRules: [...existing, nextRule] });
+    setPairAId('');
+    setPairBId('');
+  };
+
+  const handleRemovePairRule = async (ruleId: string) => {
+    const nextRules = (config.pairRules ?? []).filter((r) => r.id !== ruleId);
+    await onUpdateConfig({ ...config, pairRules: nextRules });
   };
 
   const handleMonthlyRoleOverride = async (nurse: Nurse, role: NurseRole) => {
@@ -256,6 +339,15 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
 
             <button
               type="button"
+              onClick={() => setShowMergeBox((v) => !v)}
+              disabled={orderedNurses.length < 2}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800 hover:bg-amber-100 disabled:opacity-45 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-300"
+            >
+              <GitMerge className="h-4 w-4" /> Kayıt Birleştir
+            </button>
+
+            <button
+              type="button"
               onClick={() => setShowBulkBox((v) => !v)}
               className="inline-flex items-center gap-1.5 rounded-xl border border-indigo-300 bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 dark:border-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300"
             >
@@ -263,6 +355,108 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
             </button>
           </div>
         </div>
+
+        {/* Varsayılan Açılış Ayı Çubuğu */}
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-800/70">
+          <div className="flex items-center gap-2">
+            <Pin className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
+            <span>
+              <strong>Ekip Varsayılan Açılış Ayı:</strong>{' '}
+              {formatMonthLabelTR(activeDefaultYearMonth)}
+            </span>
+          </div>
+          {activeDefaultYearMonth === config.yearMonth ? (
+            <span className="rounded-lg bg-emerald-100 px-2.5 py-1 text-[11px] font-semibold text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300">
+              ✅ Şu an açık ay varsayılan
+            </span>
+          ) : (
+            <button
+              type="button"
+              onClick={() => void onSetActiveDefaultYearMonth(config.yearMonth)}
+              className="rounded-lg bg-indigo-600 px-3 py-1 text-[11px] font-semibold text-white hover:bg-indigo-700"
+            >
+              📌 {formatMonthLabelTR(config.yearMonth)} Ayını Ekip İçin Varsayılan Yap
+            </button>
+          )}
+        </div>
+
+        {/* Mükerrer Kayıt Birleştirme Kutusu */}
+        {showMergeBox && (
+          <div className="mb-5 rounded-xl border border-amber-200 bg-amber-50/70 p-4 text-xs dark:border-amber-800 dark:bg-amber-950/30">
+            <div className="mb-2 font-bold text-amber-900 dark:text-amber-200">
+              Mükerrer Kayıt Birleştir (Yanlışlıkla iki kez açılan isimleri tek kişide toplar)
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <div>
+                <label className="mb-1 block text-[11px] font-medium">
+                  Birleştirilip Silinecek Kayıt
+                </label>
+                <select
+                  value={mergeSourceId}
+                  onChange={(e) => setMergeSourceId(e.target.value)}
+                  className="w-full rounded-xl border border-amber-300 bg-white px-2.5 py-2 text-xs dark:border-amber-700 dark:bg-slate-800"
+                >
+                  <option value="">— Seçin —</option>
+                  {orderedNurses.map((n) => (
+                    <option key={n.id} value={n.id}>
+                      {n.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-[11px] font-medium">
+                  Korunacak Asıl Kayıt
+                </label>
+                <select
+                  value={mergeTargetId}
+                  onChange={(e) => setMergeTargetId(e.target.value)}
+                  className="w-full rounded-xl border border-amber-300 bg-white px-2.5 py-2 text-xs dark:border-amber-700 dark:bg-slate-800"
+                >
+                  <option value="">— Seçin —</option>
+                  {orderedNurses
+                    .filter((n) => n.id !== mergeSourceId)
+                    .map((n) => (
+                      <option key={n.id} value={n.id}>
+                        {n.name}
+                      </option>
+                    ))}
+                </select>
+              </div>
+            </div>
+            <div className="mt-2.5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setShowMergeBox(false)}
+                className="rounded-lg px-3 py-1.5 font-medium text-slate-600 dark:text-slate-300"
+              >
+                Vazgeç
+              </button>
+              <button
+                type="button"
+                disabled={!mergeSourceId || !mergeTargetId || mergeSourceId === mergeTargetId}
+                onClick={() => {
+                  const src = orderedNurses.find((n) => n.id === mergeSourceId)?.name ?? '';
+                  const tgt = orderedNurses.find((n) => n.id === mergeTargetId)?.name ?? '';
+                  if (
+                    window.confirm(
+                      `"${src}" kaydının tercihleri "${tgt}" üzerine aktarılıp "${src}" listeden kaldırılacak. Onaylıyor musunuz?`
+                    )
+                  ) {
+                    void onMergeNurses(mergeSourceId, mergeTargetId).then(() => {
+                      setMergeSourceId('');
+                      setMergeTargetId('');
+                      setShowMergeBox(false);
+                    });
+                  }
+                }}
+                className="rounded-lg bg-amber-600 px-3.5 py-1.5 font-semibold text-white hover:bg-amber-700 disabled:opacity-50"
+              >
+                Birleştir
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* KVKK Uyarısı */}
         <div className="mb-4 flex items-start gap-2.5 rounded-xl border border-emerald-200 bg-emerald-50/70 p-3 text-xs text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-200">
@@ -336,6 +530,7 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
             >
               <option value="nobetli">Nöbetli</option>
               <option value="sorumlu">Sorumlu</option>
+              <option value="gunduz_mesai">Gündüzcü (08–16)</option>
               <option value="pasif_izinli">Pasif / Doğum İzni</option>
             </select>
           </div>
@@ -388,12 +583,14 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
                     <td className="px-2 py-2">
                       <input
                         type="text"
-                        value={nurse.name}
+                        value={nameDrafts[nurse.id] ?? nurse.name}
                         onChange={(e) => {
                           const val = e.target.value;
-                          void onUpdateNurses(
-                            nurses.map((n) => (n.id === nurse.id ? { ...n, name: val } : n))
-                          );
+                          setNameDrafts((prev) => ({ ...prev, [nurse.id]: val }));
+                        }}
+                        onBlur={() => commitNurseNameDraft(nurse)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') e.currentTarget.blur();
                         }}
                         className="w-44 rounded-lg border border-transparent bg-transparent px-1.5 py-1 font-medium hover:border-slate-300 focus:border-indigo-500 focus:bg-white focus:outline-none dark:hover:border-slate-700 dark:focus:bg-slate-800"
                       />
@@ -401,12 +598,14 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
                     <td className="px-2 py-2">
                       <input
                         type="text"
-                        value={nurse.branch}
+                        value={branchDrafts[nurse.id] ?? nurse.branch}
                         onChange={(e) => {
                           const val = e.target.value.toLocaleUpperCase('tr-TR');
-                          void onUpdateNurses(
-                            nurses.map((n) => (n.id === nurse.id ? { ...n, branch: val } : n))
-                          );
+                          setBranchDrafts((prev) => ({ ...prev, [nurse.id]: val }));
+                        }}
+                        onBlur={() => commitNurseBranchDraft(nurse)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') e.currentTarget.blur();
                         }}
                         className="w-16 rounded-lg border border-slate-200 bg-white px-2 py-1 text-center dark:border-slate-700 dark:bg-slate-800"
                       />
@@ -433,6 +632,7 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
                         >
                           <option value="nobetli">Nöbetli</option>
                           <option value="sorumlu">Sorumlu</option>
+                          <option value="gunduz_mesai">Gündüzcü (08–16)</option>
                           <option value="pasif_izinli">Pasif İzinli</option>
                         </select>
                         {eff.role === 'pasif_izinli' && (
@@ -548,8 +748,13 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
             </label>
             <input
               type="text"
-              value={config.clinicName}
-              onChange={(e) => void onUpdateConfig({ ...config, clinicName: e.target.value })}
+              value={clinicDraft}
+              onChange={(e) => setClinicDraft(e.target.value)}
+              onBlur={() => {
+                if (clinicDraft !== config.clinicName) {
+                  void onUpdateConfig({ ...config, clinicName: clinicDraft });
+                }
+              }}
               className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-800"
             />
           </div>
@@ -560,8 +765,13 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
             </label>
             <input
               type="text"
-              value={config.hospitalName}
-              onChange={(e) => void onUpdateConfig({ ...config, hospitalName: e.target.value })}
+              value={hospitalDraft}
+              onChange={(e) => setHospitalDraft(e.target.value)}
+              onBlur={() => {
+                if (hospitalDraft !== config.hospitalName) {
+                  void onUpdateConfig({ ...config, hospitalName: hospitalDraft });
+                }
+              }}
               className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-800"
             />
           </div>
@@ -572,10 +782,13 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
             </label>
             <input
               type="text"
-              value={config.preferenceDeadline ?? ''}
-              onChange={(e) =>
-                void onUpdateConfig({ ...config, preferenceDeadline: e.target.value })
-              }
+              value={deadlineDraft}
+              onChange={(e) => setDeadlineDraft(e.target.value)}
+              onBlur={() => {
+                if (deadlineDraft !== (config.preferenceDeadline ?? '')) {
+                  void onUpdateConfig({ ...config, preferenceDeadline: deadlineDraft });
+                }
+              }}
               placeholder="Örn: 25 Kasım 17:00"
               className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-800"
             />
@@ -693,6 +906,94 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
               Tercih girişini kilitle
             </label>
           </div>
+        </div>
+
+        {/* Birlikte / Ayrı Nöbet Çifti Kuralları */}
+        <div className="mt-5 border-t border-slate-200 pt-4 dark:border-slate-800">
+          <h4 className="mb-2 flex items-center gap-1.5 text-xs font-bold text-slate-800 dark:text-slate-200">
+            <Handshake className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
+            Birlikte / Ayrı Nöbet Kuralları (İsteğe Bağlı — örn: İki yeni başlayanı ayrı nöbete yaz)
+          </h4>
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <select
+              value={pairAId}
+              onChange={(e) => setPairAId(e.target.value)}
+              className="rounded-xl border border-slate-300 bg-white px-2.5 py-1.5 text-xs dark:border-slate-700 dark:bg-slate-800"
+            >
+              <option value="">— 1. Hemşire —</option>
+              {orderedNurses
+                .filter((n) => resolveEffectiveNurseRole(n, config).role === 'nobetli')
+                .map((n) => (
+                  <option key={n.id} value={n.id}>
+                    {n.name}
+                  </option>
+                ))}
+            </select>
+            <select
+              value={pairBId}
+              onChange={(e) => setPairBId(e.target.value)}
+              className="rounded-xl border border-slate-300 bg-white px-2.5 py-1.5 text-xs dark:border-slate-700 dark:bg-slate-800"
+            >
+              <option value="">— 2. Hemşire —</option>
+              {orderedNurses
+                .filter(
+                  (n) =>
+                    n.id !== pairAId && resolveEffectiveNurseRole(n, config).role === 'nobetli'
+                )
+                .map((n) => (
+                  <option key={n.id} value={n.id}>
+                    {n.name}
+                  </option>
+                ))}
+            </select>
+            <select
+              value={pairType}
+              onChange={(e) => setPairType(e.target.value as PairRule['type'])}
+              className="rounded-xl border border-slate-300 bg-white px-2.5 py-1.5 text-xs dark:border-slate-700 dark:bg-slate-800"
+            >
+              <option value="separate">Aynı Nöbete Yazma (Ayrı)</option>
+              <option value="together">Mümkünse Aynı Nöbete Yaz (Birlikte)</option>
+            </select>
+            <button
+              type="button"
+              disabled={!pairAId || !pairBId || pairAId === pairBId}
+              onClick={() => void handleAddPairRule()}
+              className="rounded-xl bg-indigo-600 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"
+            >
+              Kural Ekle
+            </button>
+          </div>
+
+          {(config.pairRules ?? []).length > 0 && (
+            <div className="mt-2.5 flex flex-wrap gap-2">
+              {(config.pairRules ?? []).map((rule) => {
+                const nA = nurses.find((n) => n.id === rule.nurseAId)?.name ?? 'Silinmiş';
+                const nB = nurses.find((n) => n.id === rule.nurseBId)?.name ?? 'Silinmiş';
+                return (
+                  <div
+                    key={rule.id}
+                    className={`inline-flex items-center gap-2 rounded-xl border px-3 py-1 text-xs ${
+                      rule.type === 'separate'
+                        ? 'border-rose-200 bg-rose-50 text-rose-900 dark:border-rose-800 dark:bg-rose-950/40 dark:text-rose-200'
+                        : 'border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200'
+                    }`}
+                  >
+                    <span>
+                      <strong>{nA}</strong> ↔ <strong>{nB}</strong> (
+                      {rule.type === 'separate' ? 'Ayrı Nöbet' : 'Birlikte Nöbet'})
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => void handleRemovePairRule(rule.id)}
+                      className="font-bold hover:opacity-75"
+                    >
+                      ×
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       </section>
 
@@ -875,35 +1176,46 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
           >
             <Upload className="h-4 w-4" /> JSON Yedek Yükle
           </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              if (
-                window.confirm(
-                  'Örnek demo hemşireler ve test tercihleri silinip sıfırdan gerçek Nefroloji kadronuzu girmeniz için temizlenecek. Onaylıyor musunuz?'
-                )
-              ) {
-                void onClearAllForRealRoster();
-              }
-            }}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-rose-300 bg-rose-50 px-4 py-2 text-xs font-semibold text-rose-800 hover:bg-rose-100 dark:border-rose-800 dark:bg-rose-950/40 dark:text-rose-300"
-          >
-            <Trash2 className="h-4 w-4" /> Demo Verisini Temizle (Gerçek Kadroya Geç)
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              if (window.confirm('Tüm veriler örnek Nefroloji demo verisine sıfırlanacak. Emin misiniz?')) {
-                void onResetDemo();
-              }
-            }}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-amber-300 bg-amber-50 px-4 py-2 text-xs font-semibold text-amber-800 hover:bg-amber-100 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300"
-          >
-            <RotateCcw className="h-4 w-4" /> Örnek Demo Verisini Yükle
-          </button>
         </div>
+
+        <details className="mt-4 rounded-xl border border-rose-200 bg-rose-50/40 p-3 dark:border-rose-900/60 dark:bg-rose-950/20">
+          <summary className="cursor-pointer select-none text-xs font-bold text-rose-800 dark:text-rose-300">
+            Tehlikeli / Sıfırlama İşlemleri (Dikkat — Önce otomatik yedek alınır)
+          </summary>
+          <div className="mt-3 flex flex-wrap gap-2.5">
+            <button
+              type="button"
+              onClick={() => {
+                const typed = window.prompt(
+                  'DİKKAT: Tüm kayıtlı personel, tercihler ve çizelgeler silinecek (işlem öncesi JSON yedek indirilir). Onaylamak için büyük harfle SİL yazın:'
+                );
+                if (typed?.trim().toLocaleUpperCase('tr-TR') === 'SİL') {
+                  onExportBackup();
+                  void onClearAllForRealRoster();
+                }
+              }}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-rose-300 bg-rose-50 px-4 py-2 text-xs font-semibold text-rose-800 hover:bg-rose-100 dark:border-rose-800 dark:bg-rose-950/40 dark:text-rose-300"
+            >
+              <Trash2 className="h-4 w-4" /> Tüm Kayıtları Temizle
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                const typed = window.prompt(
+                  'DİKKAT: Mevcut gerçek verilerin üzerine örnek demo verisi yüklenecek (önce JSON yedek indirilir). Onaylamak için büyük harfle SİL yazın:'
+                );
+                if (typed?.trim().toLocaleUpperCase('tr-TR') === 'SİL') {
+                  onExportBackup();
+                  void onResetDemo();
+                }
+              }}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-amber-300 bg-amber-50 px-4 py-2 text-xs font-semibold text-amber-800 hover:bg-amber-100 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300"
+            >
+              <RotateCcw className="h-4 w-4" /> Örnek Demo Verisini Yükle
+            </button>
+          </div>
+        </details>
       </section>
     </div>
   );

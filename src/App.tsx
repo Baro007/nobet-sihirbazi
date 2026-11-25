@@ -4,18 +4,26 @@ import { AdminSettingsView } from './components/AdminSettingsView';
 import { AppTab, Header } from './components/Header';
 import { PreferenceView, RegisterAndSaveParams } from './components/PreferenceView';
 import { ScheduleView } from './components/ScheduleView';
-import { foldTurkishSearch, getNextYearMonth, getPrevYearMonth } from './lib/calendar';
+import {
+  foldTurkishSearch,
+  getNextYearMonth,
+  getPrevYearMonth,
+  getSuggestedActiveYearMonth,
+  toTurkishTitleCase,
+} from './lib/calendar';
 import { DEFAULT_YEAR_MONTH } from './lib/demoData';
 import {
   buildBackupJson,
   buildOrInheritMonthConfig,
   clearAllToEmptyRoster,
   deleteNurseFromStore,
+  deleteNursePreferencesForNurse,
   extractPrevMonthFairness,
   extractTailFromSchedule,
   getLocalTcMap,
   loadInitialStore,
   resetAllToDemo,
+  saveActiveYearMonthToStore,
   saveMonthConfigToStore,
   saveMonthPreferencesToStore,
   saveMonthScheduleToStore,
@@ -42,13 +50,25 @@ interface ToastItem {
 }
 
 const ADMIN_PIN = (import.meta.env.VITE_ADMIN_PIN as string | undefined)?.trim() || 'hemsire2026';
+const ADMIN_SESSION_KEY = 'hemsire-nobet-admin-session';
+
+function readAdminSession(): boolean {
+  try {
+    return sessionStorage.getItem(ADMIN_SESSION_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
 
 export const App: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [storageMode, setStorageMode] = useState<'supabase' | 'local'>('local');
   const [syncWarning, setSyncWarning] = useState<string | undefined>(undefined);
 
-  const [yearMonth, setYearMonth] = useState(DEFAULT_YEAR_MONTH);
+  const [yearMonth, setYearMonth] = useState(() => getSuggestedActiveYearMonth());
+  const [activeDefaultYearMonth, setActiveDefaultYearMonth] = useState(() =>
+    getSuggestedActiveYearMonth()
+  );
   const [nurses, setNurses] = useState<Nurse[]>([]);
   const [configs, setConfigs] = useState<Record<string, MonthConfig>>({});
   const [preferencesByMonth, setPreferencesByMonth] = useState<
@@ -59,13 +79,14 @@ export const App: React.FC = () => {
 
   const [selectedNurseId, setSelectedNurseId] = useState('');
   const [activeTab, setActiveTab] = useState<AppTab>('preferences');
-  const [isAdmin, setIsAdmin] = useState(false);
+  const [isAdmin, setIsAdmin] = useState<boolean>(() => readAdminSession());
   const [isDark, setIsDark] = useState(() => localStorage.getItem('hemsire-dark') === '1');
   const [toasts, setToasts] = useState<ToastItem[]>([]);
 
   const [solving, setSolving] = useState(false);
   const [solveProgress, setSolveProgress] = useState(0);
   const workerRef = useRef<Worker | null>(null);
+  const realtimeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const notify = useCallback(
     (type: ToastItem['type'], message: string) => {
@@ -93,6 +114,12 @@ export const App: React.FC = () => {
       setSchedulesByMonth(snap.schedulesByMonth);
       setStorageMode(snap.storageMode);
       setSyncWarning(snap.syncError);
+      if (snap.activeYearMonth) {
+        setActiveDefaultYearMonth(snap.activeYearMonth);
+        if (!silent) {
+          setYearMonth(snap.activeYearMonth);
+        }
+      }
 
       if (snap.nurses.length > 0) {
         setSelectedNurseId((prev) =>
@@ -110,15 +137,27 @@ export const App: React.FC = () => {
 
   useEffect(() => {
     if (storageMode !== 'supabase') return;
-    const unsub = subscribeToRealtimeUpdates(
-      () => {
-        void reloadStore(true);
-      },
-      () => {
-        void reloadStore(true);
+    const scheduleDebouncedReload = () => {
+      if (realtimeTimerRef.current !== null) {
+        clearTimeout(realtimeTimerRef.current);
       }
+      realtimeTimerRef.current = setTimeout(() => {
+        realtimeTimerRef.current = null;
+        void reloadStore(true);
+      }, 500);
+    };
+
+    const unsub = subscribeToRealtimeUpdates(
+      scheduleDebouncedReload,
+      scheduleDebouncedReload,
+      scheduleDebouncedReload
     );
-    return unsub;
+    return () => {
+      if (realtimeTimerRef.current !== null) {
+        clearTimeout(realtimeTimerRef.current);
+      }
+      unsub();
+    };
   }, [storageMode, reloadStore]);
 
   const activeConfig = useMemo(
@@ -170,9 +209,9 @@ export const App: React.FC = () => {
     passiveReason,
     pref,
   }: RegisterAndSaveParams): Promise<string> => {
-    const cleanName = name.trim();
+    const rawTrimmed = name.trim();
     const cleanBranch = (branch || 'HEM').trim().toLocaleUpperCase('tr-TR');
-    const folded = foldTurkishSearch(cleanName);
+    const folded = foldTurkishSearch(rawTrimmed);
 
     let target =
       (existingNurseId ? nurses.find((n) => n.id === existingNurseId) : undefined) ??
@@ -182,6 +221,7 @@ export const App: React.FC = () => {
 
     if (!target) {
       isBrandNew = true;
+      const cleanName = toTurkishTitleCase(rawTrimmed);
       const maxOrder = nurses.reduce((m, n) => Math.max(m, n.sortOrder), 0);
       target = {
         id: `n-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -262,6 +302,8 @@ export const App: React.FC = () => {
     const updated: MonthSchedule = {
       yearMonth,
       assignments: nextAssignments,
+      lockedCells: activeSchedule?.lockedCells,
+      status: activeSchedule?.status ?? 'draft',
       updatedAt: new Date().toISOString(),
       solverStats: activeSchedule?.solverStats,
     };
@@ -273,8 +315,231 @@ export const App: React.FC = () => {
     }
   };
 
+  const handleTogglePublish = async () => {
+    if (!activeSchedule) return;
+    const currentlyPublished = (activeSchedule.status ?? 'published') === 'published';
+    const nextStatus: MonthSchedule['status'] = currentlyPublished ? 'draft' : 'published';
+    const updated: MonthSchedule = {
+      ...activeSchedule,
+      status: nextStatus,
+      updatedAt: new Date().toISOString(),
+    };
+    setSchedulesByMonth((prev) => ({ ...prev, [yearMonth]: updated }));
+    try {
+      await saveMonthScheduleToStore(updated);
+      notify(
+        'success',
+        nextStatus === 'published'
+          ? `${yearMonth} çizelgesi servise yayınlandı!`
+          : 'Çizelge taslak moduna çekildi (yalnızca sorumlu görebilir).'
+      );
+    } catch (err) {
+      notify('warning', `Durum yerelde güncellendi: ${String(err)}`);
+    }
+  };
+
+  const handleTogglePinCell = async (nurseId: string, day: number) => {
+    if (!activeSchedule) return;
+    const curLocks = { ...(activeSchedule.lockedCells ?? {}) };
+    const existing = new Set(curLocks[nurseId] ?? []);
+    if (existing.has(day)) {
+      existing.delete(day);
+    } else {
+      existing.add(day);
+    }
+    if (existing.size === 0) {
+      delete curLocks[nurseId];
+    } else {
+      curLocks[nurseId] = Array.from(existing).sort((a, b) => a - b);
+    }
+    const updated: MonthSchedule = {
+      ...activeSchedule,
+      lockedCells: curLocks,
+      updatedAt: new Date().toISOString(),
+    };
+    setSchedulesByMonth((prev) => ({ ...prev, [yearMonth]: updated }));
+    try {
+      await saveMonthScheduleToStore(updated);
+    } catch {
+      // Yerel state güncel
+    }
+  };
+
+  const handleClearPins = async () => {
+    if (!activeSchedule) return;
+    const updated: MonthSchedule = {
+      ...activeSchedule,
+      lockedCells: {},
+      updatedAt: new Date().toISOString(),
+    };
+    setSchedulesByMonth((prev) => ({ ...prev, [yearMonth]: updated }));
+    notify('info', 'Tüm sabitlenen hücreler temizlendi.');
+    try {
+      await saveMonthScheduleToStore(updated);
+    } catch {
+      // Yerel state güncel
+    }
+  };
+
+  const handleSetActiveDefaultYearMonth = async (ym: string) => {
+    setActiveDefaultYearMonth(ym);
+    try {
+      await saveActiveYearMonthToStore(ym);
+      notify('success', `${ym} ayı ekip için varsayılan açılış ayı yapıldı.`);
+    } catch (err) {
+      notify('warning', `Yerelde güncellendi (bulut hatası): ${String(err)}`);
+    }
+  };
+
+  const handleMergeNurses = async (sourceId: string, targetId: string) => {
+    if (!sourceId || !targetId || sourceId === targetId) return;
+    const sourceNurse = nurses.find((n) => n.id === sourceId);
+    const targetNurse = nurses.find((n) => n.id === targetId);
+    if (!sourceNurse || !targetNurse) return;
+
+    const unionSorted = (a?: number[], b?: number[]): number[] =>
+      Array.from(new Set([...(a ?? []), ...(b ?? [])])).sort((x, y) => x - y);
+
+    const nextPrefsByMonth = { ...preferencesByMonth };
+    const updatedTargetPrefs: NursePreference[] = [];
+
+    for (const [ym, pMap] of Object.entries(nextPrefsByMonth)) {
+      const srcPref = pMap[sourceId];
+      if (!srcPref) continue;
+      const tgtPref = pMap[targetId];
+      const nextMonthMap = { ...pMap };
+      delete nextMonthMap[sourceId];
+
+      let mergedPref: NursePreference;
+      if (!tgtPref) {
+        mergedPref = { ...srcPref, nurseId: targetId };
+      } else {
+        const tgtNote = tgtPref.notes?.trim() ?? '';
+        const srcNote = srcPref.notes?.trim() ?? '';
+        const mergedNotes =
+          tgtNote && srcNote && tgtNote !== srcNote ? `${tgtNote} | ${srcNote}` : tgtNote || srcNote;
+        const bridges = [...(tgtPref.bridgeLeaveRequests ?? [])];
+        for (const br of srcPref.bridgeLeaveRequests ?? []) {
+          if (!bridges.some((x) => x.startDay === br.startDay)) bridges.push(br);
+        }
+        mergedPref = {
+          yearMonth: ym,
+          nurseId: targetId,
+          positiveNobetDays: unionSorted(tgtPref.positiveNobetDays, srcPref.positiveNobetDays),
+          positiveMesaiDays: unionSorted(tgtPref.positiveMesaiDays, srcPref.positiveMesaiDays),
+          negativeDays: unionSorted(tgtPref.negativeDays, srcPref.negativeDays),
+          softNegativeDays: unionSorted(tgtPref.softNegativeDays, srcPref.softNegativeDays),
+          leaveDays: { ...(srcPref.leaveDays ?? {}), ...(tgtPref.leaveDays ?? {}) },
+          bridgeLeaveRequests: bridges,
+          notes: mergedNotes,
+          updatedAt: tgtPref.updatedAt || srcPref.updatedAt,
+        };
+      }
+      nextMonthMap[targetId] = mergedPref;
+      nextPrefsByMonth[ym] = nextMonthMap;
+      updatedTargetPrefs.push(mergedPref);
+    }
+
+    const nextSchedules = { ...schedulesByMonth };
+    const modifiedSchedules: MonthSchedule[] = [];
+    for (const [ym, sch] of Object.entries(nextSchedules)) {
+      const srcRow = sch.assignments[sourceId];
+      const srcLocks = sch.lockedCells?.[sourceId];
+      if (!srcRow && !srcLocks) continue;
+
+      const nextAssign = { ...sch.assignments };
+      if (srcRow) {
+        const tgtRow = { ...(nextAssign[targetId] ?? {}) };
+        for (const [dStr, code] of Object.entries(srcRow)) {
+          const d = Number(dStr);
+          if (code && !tgtRow[d]) tgtRow[d] = code;
+        }
+        nextAssign[targetId] = tgtRow;
+        delete nextAssign[sourceId];
+      }
+
+      const nextLocks = { ...(sch.lockedCells ?? {}) };
+      if (srcLocks) {
+        nextLocks[targetId] = unionSorted(nextLocks[targetId], srcLocks);
+        delete nextLocks[sourceId];
+      }
+
+      const updatedSch: MonthSchedule = {
+        ...sch,
+        assignments: nextAssign,
+        lockedCells: nextLocks,
+        updatedAt: new Date().toISOString(),
+      };
+      nextSchedules[ym] = updatedSch;
+      modifiedSchedules.push(updatedSch);
+    }
+
+    const nextConfigs = { ...configs };
+    const modifiedConfigs: MonthConfig[] = [];
+    for (const [ym, cfg] of Object.entries(nextConfigs)) {
+      let changed = false;
+      const tail = { ...cfg.prevMonthTail };
+      if (tail[sourceId]) {
+        if (!tail[targetId]) tail[targetId] = tail[sourceId];
+        delete tail[sourceId];
+        changed = true;
+      }
+      const overrides = { ...cfg.nurseRoleOverrides };
+      if (overrides[sourceId]) {
+        if (!overrides[targetId]) overrides[targetId] = overrides[sourceId];
+        delete overrides[sourceId];
+        changed = true;
+      }
+      let pairRules = cfg.pairRules;
+      if (pairRules && pairRules.some((r) => r.nurseAId === sourceId || r.nurseBId === sourceId)) {
+        pairRules = pairRules
+          .map((r) => ({
+            ...r,
+            nurseAId: r.nurseAId === sourceId ? targetId : r.nurseAId,
+            nurseBId: r.nurseBId === sourceId ? targetId : r.nurseBId,
+          }))
+          .filter((r) => r.nurseAId !== r.nurseBId);
+        changed = true;
+      }
+      if (changed) {
+        const updatedCfg: MonthConfig = {
+          ...cfg,
+          prevMonthTail: tail,
+          nurseRoleOverrides: overrides,
+          pairRules,
+        };
+        nextConfigs[ym] = updatedCfg;
+        modifiedConfigs.push(updatedCfg);
+      }
+    }
+
+    const remainingNurses = nurses.filter((n) => n.id !== sourceId);
+    setPreferencesByMonth(nextPrefsByMonth);
+    setSchedulesByMonth(nextSchedules);
+    setConfigs(nextConfigs);
+    setNurses(remainingNurses);
+    if (selectedNurseId === sourceId) setSelectedNurseId(targetId);
+
+    try {
+      for (const p of updatedTargetPrefs) await saveNursePreferenceToStore(p);
+      await deleteNursePreferencesForNurse(sourceId);
+      for (const sch of modifiedSchedules) await saveMonthScheduleToStore(sch);
+      for (const cfg of modifiedConfigs) await saveMonthConfigToStore(cfg);
+      await deleteNurseFromStore(sourceId, remainingNurses);
+      notify('success', `"${sourceNurse.name}" kaydı "${targetNurse.name}" ile birleştirildi.`);
+    } catch (err) {
+      notify('warning', `Birleştirme yerelde tamamlandı (bulut hatası): ${String(err)}`);
+    }
+  };
+
   const handleSolve = (newSeed = false) => {
     if (solving) return;
+    if (activeSchedule && (activeSchedule.status ?? 'published') === 'published') {
+      const confirmed = window.confirm(
+        `${yearMonth} çizelgesi şu an servise YAYINDA. Üzerine yeni otomatik plan yazılırsa servisteki herkesin gördüğü liste değişecektir. Devam etmek istiyor musunuz?`
+      );
+      if (!confirmed) return;
+    }
     setSolving(true);
     setSolveProgress(5);
 
@@ -287,11 +552,24 @@ export const App: React.FC = () => {
       schedulesByMonth
     );
 
+    const lockedAssignments: Record<string, Record<number, ShiftCode>> = {};
+    if (activeSchedule?.lockedCells) {
+      for (const [nid, daysArr] of Object.entries(activeSchedule.lockedCells)) {
+        if (!daysArr || daysArr.length === 0) continue;
+        const row: Record<number, ShiftCode> = {};
+        for (const d of daysArr) {
+          row[d] = activeSchedule.assignments[nid]?.[d] ?? '';
+        }
+        lockedAssignments[nid] = row;
+      }
+    }
+
     const payload: SolverInput = {
       config: activeConfig,
       nurses,
       preferences: activePreferences,
       prevMonthFairness: prevFairness,
+      lockedAssignments,
       seed: newSeed ? Math.floor(Math.random() * 999_999_999) + 1 : 202612,
     };
 
@@ -299,6 +577,8 @@ export const App: React.FC = () => {
       const nextSchedule: MonthSchedule = {
         yearMonth,
         assignments: result.assignments,
+        lockedCells: activeSchedule?.lockedCells,
+        status: activeSchedule?.status === 'published' ? 'published' : 'draft',
         updatedAt: new Date().toISOString(),
         solverStats: result.summary,
       };
@@ -367,6 +647,11 @@ export const App: React.FC = () => {
   const handleAdminLogin = (pin: string): boolean => {
     if (pin.trim() === ADMIN_PIN) {
       setIsAdmin(true);
+      try {
+        sessionStorage.setItem(ADMIN_SESSION_KEY, '1');
+      } catch {
+        // Sessiz geçilir
+      }
       notify('success', 'Sorumlu hemşire oturumu açıldı.');
       return true;
     }
@@ -504,13 +789,22 @@ export const App: React.FC = () => {
         onAdminLogin={handleAdminLogin}
         onAdminLogout={() => {
           setIsAdmin(false);
+          try {
+            sessionStorage.removeItem(ADMIN_SESSION_KEY);
+          } catch {
+            // Sessiz geçilir
+          }
           if (activeTab === 'admin') setActiveTab('preferences');
         }}
         onPrevMonth={() => setYearMonth((ym) => getPrevYearMonth(ym))}
         onNextMonth={() => setYearMonth((ym) => getNextYearMonth(ym))}
         activeTab={activeTab}
         onSelectTab={setActiveTab}
-        hasSchedule={Boolean(activeSchedule)}
+        hasSchedule={
+          isAdmin
+            ? Boolean(activeSchedule)
+            : Boolean(activeSchedule && (activeSchedule.status ?? 'published') === 'published')
+        }
       />
 
       <main className="mx-auto max-w-7xl px-3 py-6 sm:px-6 lg:px-8">
@@ -547,11 +841,16 @@ export const App: React.FC = () => {
             preferences={activePreferences}
             schedule={activeSchedule}
             localTcMap={localTcMap}
+            selectedNurseId={selectedNurseId}
+            onSelectNurseId={setSelectedNurseId}
             isAdmin={isAdmin}
             solving={solving}
             solveProgress={solveProgress}
             onSolve={handleSolve}
             onUpdateAssignments={handleUpdateAssignments}
+            onTogglePublish={() => void handleTogglePublish()}
+            onTogglePinCell={(nid, d) => void handleTogglePinCell(nid, d)}
+            onClearPins={() => void handleClearPins()}
             onNotify={notify}
           />
         )}
@@ -563,9 +862,12 @@ export const App: React.FC = () => {
             preferences={activePreferences}
             localTcMap={localTcMap}
             hasPrevMonthSchedule={Boolean(schedulesByMonth[getPrevYearMonth(yearMonth)])}
+            activeDefaultYearMonth={activeDefaultYearMonth}
+            onSetActiveDefaultYearMonth={handleSetActiveDefaultYearMonth}
             onUpdateConfig={handleUpdateConfig}
             onUpdateNurses={handleUpdateNurses}
             onDeleteNurse={handleDeleteNurse}
+            onMergeNurses={handleMergeNurses}
             onUpdateLocalTc={(nurseId, tcNo) => setLocalTcMap(setLocalTc(nurseId, tcNo))}
             onPullPrevMonthTail={handlePullPrevMonthTail}
             onExportBackup={handleExportBackup}

@@ -6,8 +6,10 @@ import {
   foldTurkishSearch,
   getDaysInMonth,
   getDefaultTurkishHolidays,
+  getSuggestedActiveYearMonth,
   getTurkishHolidaysForYear,
   isHolidayOrWeekend,
+  toTurkishTitleCase,
 } from '../lib/calendar';
 
 describe('calendar & Turkish holidays', () => {
@@ -105,5 +107,17 @@ describe('calendar & Turkish holidays', () => {
     const may2027 = getDefaultTurkishHolidays('2027-05');
     // Mayıs 2027: 21 hafta içi günü (1 ve 15-16 Mayıs Cmt/Paz; 17-19 Mayıs Pzt-Çar bayram -> 18 iş günü * 8 = 144s)
     expect(computeBaseStatutoryHours('2027-05', may2027)).toBe(144);
+  });
+
+  it('normalizes Turkish names with toTurkishTitleCase including i/I/4B tokens', () => {
+    expect(toTurkishTitleCase('  büşra   oğuz  ')).toBe('Büşra Oğuz');
+    expect(toTurkishTitleCase('ilknur şahin 4b')).toBe('İlknur Şahin 4B');
+    expect(toTurkishTitleCase('ılgaz akça (takviye)')).toBe('Ilgaz Akça (Takviye)');
+  });
+
+  it('suggests next month after day 15 and current month before day 15', () => {
+    expect(getSuggestedActiveYearMonth(new Date(2026, 10, 10))).toBe('2026-11');
+    expect(getSuggestedActiveYearMonth(new Date(2026, 10, 24))).toBe('2026-12');
+    expect(getSuggestedActiveYearMonth(new Date(2026, 11, 20))).toBe('2027-01');
   });
 });

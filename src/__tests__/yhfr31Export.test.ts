@@ -61,6 +61,28 @@ describe('YH.FR.31 Excel export and template filler', () => {
     expect(ws!.getCell('E20').value).toBe('Dİ');
   });
 
+  it('reflects mid-month R leave in assignments inside AK targetHours in YH.FR.31 Excel', async () => {
+    const config = createDemoMonthConfig('2026-12');
+    const nurses = createDemoNurses();
+    const prefs = createDemoPreferences('2026-12');
+
+    const wb = buildYHFR31Workbook({
+      config,
+      nurses,
+      preferences: prefs,
+      assignments: {
+        'n-01': { 3: 'R' }, // Tercihte izin yok, ama çizelgede ani rapor var -> AK 176 olmalı
+      },
+    });
+
+    const raw = await wb.xlsx.writeBuffer();
+    const reloaded = new ExcelJS.Workbook();
+    await reloaded.xlsx.load(raw);
+    const ws = reloaded.getWorksheet('ARALIK 2026')!;
+    expect(ws.getCell('G10').value).toBe('R'); // 3 Aralık -> sütun E+2 = G
+    expect(ws.getCell('AK10').value).toBe(176);
+  });
+
   it('fills an existing uploaded YH.FR.31 template without touching other sheets or existing formulas', async () => {
     const config = createDemoMonthConfig('2026-12');
     const nurses = createDemoNurses();

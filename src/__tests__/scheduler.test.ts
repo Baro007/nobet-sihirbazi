@@ -145,4 +145,155 @@ describe('nurse schedule constraint solver', () => {
       expect(m.workedHours).toBeGreaterThanOrEqual(m.targetHours);
     }
   });
+
+  it('honors 08-16 positiveMesaiDays requests without scheduling N24 on those days', () => {
+    const config = createDemoMonthConfig('2026-12');
+    const nurses = createDemoNurses();
+    const basePrefs = createDemoPreferences('2026-12');
+    const prefs = {
+      ...basePrefs,
+      'n-04': {
+        yearMonth: '2026-12',
+        nurseId: 'n-04',
+        positiveNobetDays: [],
+        positiveMesaiDays: [3, 9, 17],
+        negativeDays: [],
+        softNegativeDays: [],
+        leaveDays: {},
+        bridgeLeaveRequests: [],
+        notes: '',
+        updatedAt: '',
+      },
+      'n-09': {
+        yearMonth: '2026-12',
+        nurseId: 'n-09',
+        positiveNobetDays: [],
+        positiveMesaiDays: [4, 10],
+        negativeDays: [],
+        softNegativeDays: [],
+        leaveDays: {},
+        bridgeLeaveRequests: [],
+        notes: '',
+        updatedAt: '',
+      },
+    };
+
+    const result = solveSchedule({
+      config,
+      nurses,
+      preferences: prefs,
+      seed: 20261208,
+    });
+
+    const ev = evaluateSchedule(config, nurses, prefs, result.assignments);
+    expect(ev.hardViolations).toBe(0);
+    expect(ev.issues.filter((i) => i.code === 'MESAI_PREF_NOBET_CONFLICT')).toHaveLength(0);
+
+    const n04Days = [3, 9, 17];
+    const n09Days = [4, 10];
+    let matchedCount = 0;
+
+    for (const d of n04Days) {
+      const code = result.assignments['n-04'][d];
+      expect(code).not.toBe('N24');
+      if (code === 'M8') matchedCount++;
+    }
+    for (const d of n09Days) {
+      const code = result.assignments['n-09'][d];
+      expect(code).not.toBe('N24');
+      if (code === 'M8') matchedCount++;
+    }
+
+    expect(matchedCount).toBeGreaterThanOrEqual(4);
+  });
+
+  it('preserves lockedAssignments pins across re-solve without hard violations', () => {
+    const config = createDemoMonthConfig('2026-12');
+    const nurses = createDemoNurses();
+    const prefs = createDemoPreferences('2026-12');
+
+    const result = solveSchedule({
+      config,
+      nurses,
+      preferences: prefs,
+      lockedAssignments: {
+        'n-04': { 10: 'N24', 15: '' },
+        'n-09': { 7: 'M8' },
+      },
+      seed: 98765,
+    });
+
+    const ev = evaluateSchedule(config, nurses, prefs, result.assignments);
+    expect(ev.hardViolations).toBe(0);
+    expect(result.assignments['n-04'][10]).toBe('N24');
+    expect(result.assignments['n-04'][15]).toBe('');
+    expect(result.assignments['n-09'][7]).toBe('M8');
+  });
+
+  it('preserves pinned R leave and N16 shifts across re-solve and adjusts target hours', () => {
+    const config = createDemoMonthConfig('2026-12');
+    const nurses = createDemoNurses();
+    const prefs = createDemoPreferences('2026-12');
+
+    const result = solveSchedule({
+      config,
+      nurses,
+      preferences: prefs,
+      lockedAssignments: {
+        'n-04': { 10: 'N16' },
+        'n-09': { 7: 'R' },
+      },
+      seed: 98766,
+    });
+
+    expect(result.assignments['n-04'][10]).toBe('N16');
+    expect(result.assignments['n-09'][7]).toBe('R');
+
+    const ev = evaluateSchedule(config, nurses, prefs, result.assignments);
+    const n09 = ev.nurseMetrics.find((m) => m.nurseId === 'n-09');
+    expect(n09?.targetHours).toBe(176); // 184 - 8 (7 Aralık R)
+  });
+
+  it('supports gunduz_mesai day-only nurse role maintaining 5 weekday daytime staff and respects separate pairRules', () => {
+    const config = createDemoMonthConfig('2026-12');
+    config.pairRules = [
+      { id: 'pr-1', nurseAId: 'n-04', nurseBId: 'n-09', type: 'separate' },
+    ];
+    const nurses = createDemoNurses().map((n) =>
+      n.id === 'n-10' ? { ...n, role: 'gunduz_mesai' as const } : n
+    );
+    const basePrefs = createDemoPreferences('2026-12');
+    const prefs = {
+      ...basePrefs,
+      'n-10': {
+        ...basePrefs['n-10'],
+        positiveNobetDays: [],
+        negativeDays: [],
+      },
+    };
+
+    const result = solveSchedule({
+      config,
+      nurses,
+      preferences: prefs,
+      prevMonthFairness: {
+        threeDayGapCount: {},
+        overtimeHours: {},
+        yearBayramShifts: { 'n-01': 2 },
+      },
+      seed: 20261215,
+    });
+
+    const ev = evaluateSchedule(config, nurses, prefs, result.assignments);
+    expect(ev.hardViolations).toBe(0);
+    expect(ev.issues.filter((i) => i.code === 'PAIR_SEPARATE_CONFLICT')).toHaveLength(0);
+
+    // Gündüzcü personel (n-10): hafta içi M8, hafta sonu boş, N24 sıfır
+    expect(result.assignments['n-10'][1]).toBe('M8');
+    expect(result.assignments['n-10'][5]).toBe('');
+    for (let d = 1; d <= 31; d++) {
+      expect(result.assignments['n-10'][d]).not.toBe('N24');
+      expect(ev.dailyCounts[d].daytimeTotal).toBe(ev.dailyCounts[d].isWeekendOrHoliday ? 3 : 5);
+    }
+  });
 });

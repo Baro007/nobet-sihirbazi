@@ -7,6 +7,7 @@ import {
   isWorkingShift,
 } from '../lib/calendar';
 import {
+  LeaveCode,
   MonthConfig,
   Nurse,
   NurseMetrics,
@@ -36,18 +37,44 @@ export function resolveEffectiveNurseRole(
   };
 }
 
+export function resolveEffectiveLeaveDays(
+  prefLeaveDays?: Record<number, LeaveCode>,
+  nurseAssign?: Record<number, ShiftCode>
+): Record<number, LeaveCode> {
+  const merged: Record<number, LeaveCode> = { ...(prefLeaveDays ?? {}) };
+  if (nurseAssign) {
+    for (const [dayKey, code] of Object.entries(nurseAssign)) {
+      const d = Number(dayKey);
+      if (!Number.isInteger(d) || d <= 0) continue;
+      if (code === 'YI' || code === 'R' || code === 'II') {
+        merged[d] = code;
+      } else if (code === 'DI') {
+        // Doğum/süt izni kodu matrise elle işlendiğinde hedef saatten düşümü eşdeğer izin olarak say
+        merged[d] = 'II';
+      }
+    }
+  }
+  return merged;
+}
+
 export function isSorumluPresentOnDay(
   day: number,
   config: MonthConfig,
   nurses: Nurse[],
-  preferences: Record<string, NursePreference>
+  preferences: Record<string, NursePreference>,
+  assignments?: Record<string, Record<number, ShiftCode>>
 ): boolean {
   if (isHolidayOrWeekend(day, config.yearMonth, config.holidays)) return false;
   return nurses.some((n) => {
     if (!n.active) return false;
     const { role } = resolveEffectiveNurseRole(n, config);
     if (role !== 'sorumlu') return false;
-    return !preferences[n.id]?.leaveDays?.[day];
+    if (preferences[n.id]?.leaveDays?.[day]) return false;
+    const assigned = assignments?.[n.id]?.[day];
+    if (assigned === 'YI' || assigned === 'R' || assigned === 'DI' || assigned === 'II') {
+      return false;
+    }
+    return true;
   });
 }
 
@@ -89,7 +116,7 @@ export function evaluateSchedule(
 
   // 1. Günlük kadro kapsaması kontrolü
   for (let d = 1; d <= days; d++) {
-    const sorumluPresent = isSorumluPresentOnDay(d, config, nurses, preferences);
+    const sorumluPresent = isSorumluPresentOnDay(d, config, nurses, preferences, assignments);
     const { expectedNobet, expectedMesai, expectedSorumlu, isWeekendOrHoliday } =
       getExpectedDailyStaffing(d, config, sorumluPresent);
     let nobet = 0;
@@ -144,6 +171,7 @@ export function evaluateSchedule(
     const pref = preferences[nurse.id];
     const leaveDays = pref?.leaveDays ?? {};
     const positiveSet = new Set(pref?.positiveNobetDays ?? []);
+    const positiveMesaiSet = new Set(pref?.positiveMesaiDays ?? []);
     const negativeSet = new Set(pref?.negativeDays ?? []);
     const softNegSet = new Set(pref?.softNegativeDays ?? []);
     const nurseAssign = assignments[nurse.id] ?? {};
@@ -164,9 +192,13 @@ export function evaluateSchedule(
     let weekendHolidayMesai = 0;
     let threeDayGapCount = 0;
     let positiveMatched = 0;
+    let positiveNobetMatched = 0;
+    let positiveMesaiMatched = 0;
     let day3MesaiCount = 0;
     let negativeViolations = 0;
     let softNegativeViolations = 0;
+    const violatedNegativeDays: number[] = [];
+    const violatedSoftNegativeDays: number[] = [];
     let leaveDaysCount = 0;
 
     // Ay devri kontrolleri (önceki ayın son 2 günü -> yeni ayın 1. ve 2. günü)
@@ -244,14 +276,35 @@ export function evaluateSchedule(
         if (code === 'N24') {
           nobetCount++;
           if (holOrWknd) weekendHolidayNobet++;
-          if (positiveSet.has(d)) positiveMatched++;
+          if (positiveSet.has(d)) {
+            positiveMatched++;
+            positiveNobetMatched++;
+          }
         } else if (code === 'N16') {
           nobet16Count++;
           if (holOrWknd) weekendHolidayNobet++;
-          if (positiveSet.has(d)) positiveMatched++;
+          if (positiveSet.has(d)) {
+            positiveMatched++;
+            positiveNobetMatched++;
+          }
         } else if (code === 'M8' || code === 'S8') {
           mesaiCount++;
           if (holOrWknd) weekendHolidayMesai++;
+          if (positiveMesaiSet.has(d)) {
+            positiveMatched++;
+            positiveMesaiMatched++;
+          }
+        }
+
+        if ((code === 'N24' || code === 'N16') && positiveMesaiSet.has(d)) {
+          issues.push({
+            id: `mesai-nobet-conflict-${nurse.id}-${d}`,
+            severity: 'warning',
+            code: 'MESAI_PREF_NOBET_CONFLICT',
+            nurseId: nurse.id,
+            day: d,
+            message: `${nurse.name}: ${d}. gün sadece 08–16 mesai istemişti (gece nöbete kalamaz), ancak nöbet yazılmış.`,
+          });
         }
 
         if (leaveDays[d]) {
@@ -267,6 +320,7 @@ export function evaluateSchedule(
 
         if (negativeSet.has(d)) {
           negativeViolations++;
+          violatedNegativeDays.push(d);
           issues.push({
             id: `neg-conflict-${nurse.id}-${d}`,
             severity: 'hard',
@@ -277,6 +331,7 @@ export function evaluateSchedule(
           });
         } else if (softNegSet.has(d)) {
           softNegativeViolations++;
+          violatedSoftNegativeDays.push(d);
         }
       }
 
@@ -324,10 +379,22 @@ export function evaluateSchedule(
       }
     }
 
+    const unmatchedSet = new Set<number>();
+    for (const d of positiveSet) {
+      const c = shiftAt(d);
+      if (c !== 'N24' && c !== 'N16') unmatchedSet.add(d);
+    }
+    for (const d of positiveMesaiSet) {
+      const c = shiftAt(d);
+      if (c !== 'M8' && c !== 'S8') unmatchedSet.add(d);
+    }
+    const unmatchedPositiveDays = Array.from(unmatchedSet).sort((a, b) => a - b);
+
+    const effectiveLeaveDays = resolveEffectiveLeaveDays(leaveDays, nurseAssign);
     const targetHours =
       role === 'pasif_izinli'
         ? 0
-        : computeNurseTargetHours(config.yearMonth, config.holidays, leaveDays);
+        : computeNurseTargetHours(config.yearMonth, config.holidays, effectiveLeaveDays);
 
     nurseMetrics.push({
       nurseId: nurse.id,
@@ -343,10 +410,19 @@ export function evaluateSchedule(
       weekendHolidayMesai,
       threeDayGapCount,
       positiveMatched,
-      positiveTotal: positiveSet.size,
+      positiveTotal: positiveSet.size + positiveMesaiSet.size,
+      positiveNobetMatched,
+      positiveNobetTotal: positiveSet.size,
+      positiveMesaiMatched,
+      positiveMesaiTotal: positiveMesaiSet.size,
+      unmatchedPositiveDays,
       day3MesaiCount,
       negativeViolations,
+      negativeTotal: negativeSet.size,
+      violatedNegativeDays,
       softNegativeViolations,
+      softNegativeTotal: softNegSet.size,
+      violatedSoftNegativeDays,
       leaveDaysCount,
     });
   }
@@ -371,6 +447,46 @@ export function evaluateSchedule(
   const preferenceSatisfactionPct =
     totalPos > 0 ? Math.round((matchedPos / totalPos) * 100) : 100;
 
+  const totalNegativeViolations = activeNobetliMetrics.reduce(
+    (acc, m) => acc + m.negativeViolations,
+    0
+  );
+  const totalNegativeRequested = activeNobetliMetrics.reduce(
+    (acc, m) => acc + m.negativeTotal,
+    0
+  );
+  const totalSoftNegativeViolations = activeNobetliMetrics.reduce(
+    (acc, m) => acc + m.softNegativeViolations,
+    0
+  );
+  const totalSoftNegativeRequested = activeNobetliMetrics.reduce(
+    (acc, m) => acc + m.softNegativeTotal,
+    0
+  );
+
+  // Birlikte / Ayrı nöbet kuralları kontrolü
+  const nurseNameMap = new Map(activeNurses.map((n) => [n.id, n.name]));
+  for (const rule of config.pairRules ?? []) {
+    if (rule.type !== 'separate') continue;
+    const nameA = nurseNameMap.get(rule.nurseAId);
+    const nameB = nurseNameMap.get(rule.nurseBId);
+    if (!nameA || !nameB) continue;
+    for (let d = 1; d <= days; d++) {
+      const cA = assignments[rule.nurseAId]?.[d];
+      const cB = assignments[rule.nurseBId]?.[d];
+      if ((cA === 'N24' || cA === 'N16') && (cB === 'N24' || cB === 'N16')) {
+        issues.push({
+          id: `pair-sep-${rule.id}-${d}`,
+          severity: 'warning',
+          code: 'PAIR_SEPARATE_CONFLICT',
+          nurseId: rule.nurseAId,
+          day: d,
+          message: `${nameA} ve ${nameB}: ${d}. gün ayrı nöbet kuralına rağmen aynı nöbete yazılmış.`,
+        });
+      }
+    }
+  }
+
   const hardViolations = issues.filter((i) => i.severity === 'hard').length;
   const softWarnings = issues.filter((i) => i.severity === 'warning').length;
 
@@ -381,6 +497,10 @@ export function evaluateSchedule(
     nurseMetrics,
     hourSpread,
     preferenceSatisfactionPct,
+    totalNegativeViolations,
+    totalNegativeRequested,
+    totalSoftNegativeViolations,
+    totalSoftNegativeRequested,
     weekendSpread,
     threeDayGapMin,
     threeDayGapMax,
@@ -401,6 +521,7 @@ export function runPreflightChecks(
   let pasifCount = 0;
   let totalTargetHours = 0;
   const activeNobetli: Nurse[] = [];
+  const gunduzList: Nurse[] = [];
 
   for (const n of nurses) {
     if (!n.active) continue;
@@ -415,6 +536,8 @@ export function runPreflightChecks(
       );
     } else if (role === 'sorumlu') {
       sorumluCount++;
+    } else if (role === 'gunduz_mesai') {
+      gunduzList.push(n);
     } else {
       pasifCount++;
     }
@@ -427,23 +550,50 @@ export function runPreflightChecks(
   for (let d = 1; d <= days; d++) {
     const sorumluPresent = isSorumluPresentOnDay(d, config, nurses, preferences);
     const { expectedNobet, expectedMesai } = getExpectedDailyStaffing(d, config, sorumluPresent);
-    totalRequiredHours += expectedNobet * 24 + expectedMesai * 8;
+    const holOrWknd = isHolidayOrWeekend(d, config.yearMonth, config.holidays);
+    const gunduzPresent = holOrWknd
+      ? 0
+      : gunduzList.filter((gn) => !preferences[gn.id]?.leaveDays?.[d]).length;
+    const rotatingMesaiNeeded = Math.max(0, expectedMesai - gunduzPresent);
+    totalRequiredHours += expectedNobet * 24 + rotatingMesaiNeeded * 8;
 
-    const needed = expectedNobet + expectedMesai;
+    const needed = expectedNobet + rotatingMesaiNeeded;
     let available = 0;
+    let availableForNobet = 0;
+    let posMesaiCount = 0;
     for (const n of activeNobetli) {
       const pref = preferences[n.id];
       const hasLeave = Boolean(pref?.leaveDays?.[d]);
       const hasHardNeg = Boolean(pref?.negativeDays?.includes(d));
       const tail = config.prevMonthTail?.[n.id];
       const tailBlockedDay1 = d === 1 && (tail?.[2] === 'N24' || tail?.[2] === 'N16');
+      const tailNobetBlocked =
+        (d === 1 && (tail?.[1] === 'N24' || tail?.[1] === 'N16')) ||
+        (d === 2 && (tail?.[2] === 'N24' || tail?.[2] === 'N16'));
       if (!hasLeave && !hasHardNeg && !tailBlockedDay1) {
         available++;
+        const wantsMesaiOnly = Boolean(pref?.positiveMesaiDays?.includes(d));
+        if (wantsMesaiOnly) {
+          posMesaiCount++;
+        } else if (!tailNobetBlocked) {
+          availableForNobet++;
+        }
       }
     }
     if (available < needed) {
       blockers.push(
         `${d}. gün için müsait nöbetli hemşire sayısı ${available}, gereken kadro ${needed} (${expectedNobet} nöbet + ${expectedMesai} mesai).`
+      );
+    } else if (availableForNobet < expectedNobet) {
+      warnings.push(
+        `${d}. gün için 24s nöbet tutabilecek hemşire sayısı ${availableForNobet}, gereken nöbetçi ${expectedNobet} (bazı hemşireler sadece 08–16 mesai seçmiş).`
+      );
+    }
+    if (posMesaiCount > rotatingMesaiNeeded && posMesaiCount > 0) {
+      warnings.push(
+        rotatingMesaiNeeded === 0
+          ? `${d}. gün ${posMesaiCount} hemşire 08–16 mesai istemiş, ancak o gün ek mesai kadrosu 0 (bu kişiler gece nöbetine yazılmadan boş bırakılır).`
+          : `${d}. gün ${posMesaiCount} hemşire 08–16 mesai istemiş, ancak o gün ${rotatingMesaiNeeded} mesai kadrosu var (fazlası gece nöbetine yazılmadan boş bırakılır).`
       );
     }
   }

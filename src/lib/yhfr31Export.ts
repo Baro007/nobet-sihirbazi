@@ -9,7 +9,7 @@ import {
   parseYearMonth,
 } from './calendar';
 import { SHIFT_META } from './shifts';
-import { resolveEffectiveNurseRole } from '../solver/validator';
+import { resolveEffectiveLeaveDays, resolveEffectiveNurseRole } from '../solver/validator';
 import { MonthConfig, Nurse, NursePreference, ShiftCode } from '../types/schedule';
 
 export interface YHFR31ExportParams {
@@ -312,10 +312,11 @@ export function buildYHFR31Workbook(params: YHFR31ExportParams): ExcelJS.Workboo
       cell.font = { name: 'Times New Roman', size: 8.5 };
     }
 
+    const effectiveLeaveDays = resolveEffectiveLeaveDays(leaveDays, nurseAssign);
     const targetHours =
       role === 'pasif_izinli'
         ? 0
-        : computeNurseTargetHours(config.yearMonth, config.holidays, leaveDays);
+        : computeNurseTargetHours(config.yearMonth, config.holidays, effectiveLeaveDays);
     const overtime = role === 'pasif_izinli' ? 0 : Math.max(0, workedHours - targetHours);
 
     ws.getCell(r, 36).value = { formula: `SUM(E${r}:AI${r})`, result: workedHours };
